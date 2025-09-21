@@ -82,12 +82,10 @@
   const clientId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Math.random());
   let authed = false;
   let saveTimer = null;
-  let suppress = false;
   let localPlaylist = [];
   let player;
   let playerReady = false;
   let currentVideoId = ''; // 현재 재생 중인 비디오 ID를 추적하는 변수
-  let isPlayingNext = false; // 새로운 곡을 재생하려는 상태인지 추적
 
   function showMessage(message, type = 'info') {
     messageBox.textContent = message;
@@ -133,6 +131,8 @@
 
     startRealtime();
     wireUI();
+    // 접속하자마자 최신 상태 동기화
+    syncStateFromFirestore();
   }
 
   // 유튜브 플레이어 API가 로드되면 호출되는 함수
@@ -160,13 +160,7 @@
 
   // 유튜브 플레이어 상태 변경 시 호출
   function onPlayerStateChange(event) {
-    if (event.data === YT.PlayerState.PLAYING) {
-      currentVideoId = player.getVideoData().video_id;
-      if (!suppress) {
-        debouncedSave(currentState());
-      }
-    }
-    // 비디오 재생이 끝났을 때
+    // 비디오 재생이 끝났을 때만 다음 곡 재생
     if (event.data === YT.PlayerState.ENDED) {
       playNext();
     }
@@ -174,7 +168,7 @@
 
   // ----- 저장/동기화 -----
   function debouncedSave(state) {
-    if (!authed) return;
+    if (!authed || !playerReady) return;
     if (saveTimer) clearTimeout(saveTimer);
     saveTimer = setTimeout(() => saveState(state), 300); // 디바운스 시간 늘림
   }
@@ -216,6 +210,7 @@
                   player.loadVideoById(state.videoId);
                   player.seekTo(state.timestamp, true);
                   player.playVideo();
+                  debouncedSave(currentState());
               }
           }
       } catch (e) {
@@ -240,7 +235,7 @@
           renderList();
         }
       } finally {
-        setTimeout(() => { suppress = false; }, 500);
+        // No auto-sync on snapshot change. User must press 'sync' button.
       }
     }, (err) => { console.error("구독 오류: " + err.message); });
   }
@@ -256,26 +251,16 @@
       const div = document.createElement('div');
       div.className = 'item';
       div.innerHTML = `<span>${item.artist} - ${item.title}</span><button class="delete-btn" data-index="${index}">&#x2715;</button>`;
-      div.addEventListener('click', async (e) => {
-        if (e.target.classList.contains('delete-btn')) return;
-        try { 
-          if (player) {
-            player.loadVideoById(item.videoId, 0);
-            player.playVideo();
-          }
-        } catch {}
-        debouncedSave(currentState());
-      });
-      listEl.appendChild(div);
-    });
-    // 삭제 버튼 이벤트 리스너 추가
-    listEl.querySelectorAll('.delete-btn').forEach(btn => {
-      btn.addEventListener('click', (e) => {
+      
+      // 삭제 버튼 이벤트 리스너 추가
+      div.querySelector('.delete-btn').addEventListener('click', (e) => {
         const index = parseInt(e.target.dataset.index, 10);
         localPlaylist.splice(index, 1);
         renderList();
         debouncedSave(currentState());
       });
+
+      listEl.appendChild(div);
     });
   }
 
@@ -304,27 +289,33 @@
   }
 
   function currentState() {
+    let videoId = '';
+    if (player && player.getVideoData) {
+        try {
+            const data = player.getVideoData();
+            if (data && data.video_id) {
+                videoId = data.video_id;
+            }
+        } catch (e) {
+            console.error("Error getting video ID from player:", e);
+        }
+    }
     return { 
-      videoId: player ? player.getVideoData().video_id : '',
+      videoId: videoId,
       playlist: localPlaylist
     };
   }
 
-  async function playRandom() {
-    if (!localPlaylist.length) return;
-    const idx = Math.floor(Math.random() * localPlaylist.length);
-    const song = localPlaylist[idx];
-    try {
-      if (player) {
-        player.loadVideoById(song.videoId, 0);
-        player.playVideo();
-      }
-    } catch {}
-    debouncedSave(currentState());
-  }
-
   async function playNext() {
-    if (!localPlaylist.length) return;
+    if (!localPlaylist.length) {
+      // 재생목록이 비어있으면 재생 중단하고 상태 저장
+      if (player && player.getPlayerState() !== YT.PlayerState.PAUSED) {
+          player.pauseVideo();
+          debouncedSave(currentState());
+      }
+      return;
+    }
+    
     let nextSong = null;
     const currentVideo = player ? player.getVideoData().video_id : null;
     const lastSong = localPlaylist[localPlaylist.length - 1];
@@ -368,7 +359,8 @@
           videoId: videoId
         });
         renderList();
-
+        
+        // 새 노래가 추가될 때만 상태를 저장하여 모든 사용자에게 동기화
         debouncedSave(currentState());
         urlInput.value = '';
       } catch (e) {
