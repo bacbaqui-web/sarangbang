@@ -48,7 +48,6 @@
     <div class="row" style="margin-top:10px">
       <input id="url" placeholder="유튜브 링크 또는 ID를 붙여넣기"/>
       <button id="add" class="btn">추가</button>
-      <button id="shuffle" class="btn sec">셔플 재생</button>
       <button id="sync" class="btn sec">동기화</button>
     </div>
     
@@ -74,7 +73,6 @@
   // ----- 요소 -----
   const urlInput = document.getElementById('url');
   const addBtn = document.getElementById('add');
-  const shuffleBtn = document.getElementById('shuffle');
   const syncBtn = document.getElementById('sync');
   const listEl = document.getElementById('playlist');
   const messageBox = document.getElementById('message-box');
@@ -89,6 +87,7 @@
   let player;
   let playerReady = false;
   let currentVideoId = ''; // 현재 재생 중인 비디오 ID를 추적하는 변수
+  let isPlayingNext = false; // 새로운 곡을 재생하려는 상태인지 추적
 
   function showMessage(message, type = 'info') {
     messageBox.textContent = message;
@@ -169,7 +168,7 @@
     }
     // 비디오 재생이 끝났을 때
     if (event.data === YT.PlayerState.ENDED) {
-      playRandom();
+      playNext();
     }
   }
 
@@ -202,6 +201,29 @@
     }
   }
 
+  // 동기화 버튼을 눌렀을 때 최신 상태를 불러와 적용하는 함수
+  async function syncStateFromFirestore() {
+      if (!authed) return;
+      const db = firebase.firestore();
+      const ref = db.collection('artifacts').doc(appId).collection('public')
+        .doc('data').collection('playback_state').doc('main_state');
+      
+      try {
+          const doc = await ref.get();
+          if (doc.exists) {
+              const state = doc.data();
+              if (playerReady && state.videoId) {
+                  player.loadVideoById(state.videoId);
+                  player.seekTo(state.timestamp, true);
+                  player.playVideo();
+              }
+          }
+      } catch (e) {
+          console.error("상태 동기화 실패: " + e.message);
+          showMessage("동기화에 실패했습니다.", 'error');
+      }
+  }
+
   function startRealtime() {
     const db = firebase.firestore();
     const ref = db.collection('artifacts').doc(appId).collection('public')
@@ -210,25 +232,12 @@
     ref.onSnapshot(async (snap) => {
       if (!snap.exists) return;
       const state = snap.data() || {};
-      if (state.lastUpdatedBy === clientId) return;
-
+      
       try {
-        suppress = true;
-
         const remoteList = Array.isArray(state.playlist) ? state.playlist : [];
         if (JSON.stringify(remoteList) !== JSON.stringify(localPlaylist)) {
           localPlaylist = remoteList;
           renderList();
-        }
-
-        // 비디오 ID가 변경된 경우에만 새로 로드
-        if (playerReady && state.videoId && state.videoId !== currentVideoId) {
-          player.loadVideoById(state.videoId);
-        }
-
-        const t = Number(state.timestamp) || 0;
-        if (player && Math.abs(player.getCurrentTime() - t) > 2) { // 시간 오차 허용 범위 늘림
-          player.seekTo(t, true);
         }
       } finally {
         setTimeout(() => { suppress = false; }, 500);
@@ -271,6 +280,8 @@
   }
 
   function getVideoId(url) {
+    // 유튜브 뮤직 링크를 일반 유튜브 링크로 변환
+    url = url.replace('music.youtube.com', 'www.youtube.com');
     const regex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i;
     const match = url.match(regex);
     return (match && match[1]) ? match[1] : null;
@@ -312,6 +323,32 @@
     debouncedSave(currentState());
   }
 
+  async function playNext() {
+    if (!localPlaylist.length) return;
+    let nextSong = null;
+    const currentVideo = player ? player.getVideoData().video_id : null;
+    const lastSong = localPlaylist[localPlaylist.length - 1];
+
+    if (lastSong && lastSong.videoId !== currentVideo) {
+      // 새로운 곡이 추가되었다면 그 곡을 다음으로 재생
+      nextSong = lastSong;
+    } else {
+      // 새로운 곡이 없으면 랜덤으로 재생
+      const randomIdx = Math.floor(Math.random() * localPlaylist.length);
+      nextSong = localPlaylist[randomIdx];
+    }
+    
+    if (nextSong) {
+      try {
+        if (player) {
+          player.loadVideoById(nextSong.videoId, 0);
+          player.playVideo();
+        }
+      } catch {}
+      debouncedSave(currentState());
+    }
+  }
+
   function wireUI() {
     addBtn.addEventListener('click', async () => {
       const url = (urlInput.value || '').trim();
@@ -327,10 +364,11 @@
         const videoDetails = await fetchVideoDetails(videoId);
         localPlaylist.push({
           title: videoDetails.title,
-          artist: videoDetails.artist,
+          artist: videoDetails.channelTitle,
           videoId: videoId
         });
         renderList();
+
         debouncedSave(currentState());
         urlInput.value = '';
       } catch (e) {
@@ -341,8 +379,9 @@
       }
     });
 
-    shuffleBtn.addEventListener('click', () => { playRandom(); });
-    syncBtn.addEventListener('click', () => { debouncedSave(currentState()); });
+    syncBtn.addEventListener('click', () => { 
+        syncStateFromFirestore();
+    });
   }
 
   // ----- 시작 -----
