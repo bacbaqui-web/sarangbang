@@ -157,6 +157,9 @@
     if (event.data === YT.PlayerState.ENDED) {
       playNext();
     }
+    if (event.data === YT.PlayerState.PLAYING) {
+        debouncedSave(currentState());
+    }
   }
 
   // ----- 저장/동기화 -----
@@ -194,7 +197,11 @@
       .doc('data').collection('playback_state').doc('main_state');
 
     ref.onSnapshot(async (snap) => {
-      if (!snap.exists) return;
+      if (!snap.exists) {
+        // Firestore 문서가 존재하지 않을 경우 초기 상태를 저장
+        debouncedSave(currentState());
+        return;
+      }
       const state = snap.data() || {};
       
       try {
@@ -203,15 +210,14 @@
           localPlaylist = remoteList;
           renderList();
         }
-
-        // 항상 최신 재생 상태를 따라가도록 자동 동기화
-        if (playerReady && state.videoId) {
-          if (player.getVideoData().video_id !== state.videoId) {
+        
+        // 현재 비디오 ID와 Firestore의 비디오 ID가 다를 때만 업데이트
+        const playerVideoId = player.getVideoData()?.video_id;
+        if (playerReady && state.videoId && playerVideoId !== state.videoId) {
             player.loadVideoById(state.videoId);
-          }
-          player.seekTo(state.timestamp, true);
-          player.playVideo();
+            player.seekTo(state.timestamp, true);
         }
+
       } catch (e) {
         console.error("동기화 오류:", e);
       }
@@ -292,7 +298,7 @@
     }
     
     let nextSong = null;
-    const currentVideo = player ? player.getVideoData().video_id : null;
+    const currentVideo = player ? player.getVideoData()?.video_id : null;
     const lastSong = localPlaylist[localPlaylist.length - 1];
 
     if (lastSong && lastSong.videoId !== currentVideo) {
