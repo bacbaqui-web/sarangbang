@@ -1,175 +1,52 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>음악 셔플 플레이어 + Firebase 진단</title>
-  <style>
-    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;background:#111;color:#eee;margin:0}
-    .wrap{max-width:900px;margin:24px auto;padding:0 16px}
-    .card{border:1px solid #444;border-radius:10px;padding:16px;margin:12px 0}
-    .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-    .btn{background:#48bb78;color:#fff;border:0;border-radius:999px;padding:.6rem 1rem;cursor:pointer}
-    .btn.sec{background:#4a5568}
-    .ok{color:#68d391}.fail{color:#fc8181}.muted{color:#a0aec0}
-    input{background:#1f2937;color:#eee;border:1px solid #374151;border-radius:8px;padding:.55rem .7rem;flex:1;min-width:220px}
-    .item{display:flex;justify-content:space-between;align-items:center;padding:.5rem .6rem;border-bottom:1px solid #2f3743;cursor:pointer}
-    .item:hover{background:#2a3340}
-  </style>
-  <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore-compat.js"></script>
+  <meta charset="UTF-8">
+  <title>Firebase 연결 테스트</title>
+  <script src="https://www.gstatic.com/firebasejs/9.6.11/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.11/firebase-analytics-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.11/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.11/firebase-firestore-compat.js"></script>
 </head>
 <body>
-<div class="wrap">
-  <h1>음악 셔플 플레이어</h1>
-  <div class="card" id="diag">준비중…</div>
+  <h1>Firebase 연결 테스트</h1>
+  <pre id="status">초기화 중...</pre>
 
-  <div class="card">
-    <div class="row" style="justify-content:space-between">
-      <div>사용자 ID: <span id="uid" class="muted">-</span></div>
-      <div id="conn" class="muted">오프라인</div>
-    </div>
+  <script>
+    // 사용자가 제공한 apiKey 그대로 넣은 firebaseConfig
+    const firebaseConfig = {
+      apiKey: "AIzaSyDz6xGJNKXinG5rREjdrPz7toIYGZXzilU",
+      authDomain: "sarangbangmusicplaylist.firebaseapp.com",
+      projectId: "sarangbangmusicplaylist",
+      storageBucket: "sarangbangmusicplaylist.appspot.com",
+      messagingSenderId: "193412502606",
+      appId: "1:193412502606:web:0f7f9ddbef1ee6711d1ff",
+      measurementId: "G-L14GH3BHYD"
+    };
 
-    <audio id="audio" controls style="width:100%;margin-top:8px;border-radius:8px"></audio>
+    // Firebase 초기화
+    firebase.initializeApp(firebaseConfig);
+    firebase.analytics();
 
-    <div class="row" style="margin-top:10px">
-      <input id="url" placeholder="오디오 URL(mp3 등) 붙여넣기"/>
-      <button id="add" class="btn">추가</button>
-      <button id="shuffle" class="btn.sec">셔플 재생</button>
-      <button id="sync" class="btn.sec">동기화</button>
-    </div>
+    const statusEl = document.getElementById('status');
 
-    <div id="playlist" class="card" style="margin:10px 0 0 0">
-      <div class="muted">재생목록이 비어있습니다.</div>
-    </div>
-  </div>
-</div>
-
-<script>
-  // Firebase 구성 (프로젝트: sarangbangmusicplaylist)
-  const firebaseConfig = {
-    apiKey: "AIzaSyDz6xGJNXKinG5rREjdPz7toIYGZXziIU",
-    authDomain: "sarangbangmusicplaylist.firebaseapp.com",
-    projectId: "sarangbangmusicplaylist",
-    storageBucket: "sarangbangmusicplaylist.appspot.com",
-    messagingSenderId: "193412502606",
-    appId: "1:193412502606:web:0f7f9ddbef1ee6711d1ff",
-    measurementId: "G-L14GH3BHYD"
-  };
-
-  const diag = document.getElementById('diag');
-  const uidEl = document.getElementById('uid');
-  const connEl = document.getElementById('conn');
-  const audio = document.getElementById('audio');
-  const urlInput = document.getElementById('url');
-  const addBtn = document.getElementById('add');
-  const shuffleBtn = document.getElementById('shuffle');
-  const syncBtn = document.getElementById('sync');
-  const listEl = document.getElementById('playlist');
-
-  const appId = 'default-app-id';
-  const clientId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Math.random());
-  let authed = false, saveTimer = null, suppress = false, endedHooked = false;
-  let localPlaylist = [];
-
-  function log(h){ diag.innerHTML += h; }
-  function setDiag(h){ diag.innerHTML = h; }
-
-  async function boot() {
-    try { firebase.initializeApp(firebaseConfig); setDiag("<p class='ok'>✔ Firebase 초기화 성공</p>"); }
-    catch(e){ setDiag("<p class='fail'>✘ 초기화 실패: "+e.message+"</p>"); return; }
-
-    try {
-      await firebase.auth().signInAnonymously();
-      authed = true; uidEl.textContent = firebase.auth().currentUser.uid; connEl.textContent = '온라인';
-      log("<p class='ok'>✔ 익명 로그인 성공</p>");
-    } catch (e) {
-      log("<p class='fail'>✘ 인증 실패: "+e.message+"</p>");
-      if (String(e.message).includes('operation-not-allowed')) log("<p class='fail'>Authentication > 익명 로그인 활성화 필요</p>");
-      return;
-    }
-
-    const db = firebase.firestore();
-    try {
-      const ping = db.collection('artifacts').doc(appId).collection('public').doc('_ping');
-      await ping.set({ pong:true, by:clientId, at:new Date() }, { merge:true });
-      log("<p class='ok'>✔ Firestore 쓰기 성공</p>");
-    } catch (e) { log("<p class='fail'>✘ Firestore 쓰기 실패: "+e.message+"</p>"); }
-
-    startRealtime(); wireUI();
-  }
-
-  function debouncedSave(state){ if (!authed) return; if (saveTimer) clearTimeout(saveTimer); saveTimer=setTimeout(()=>saveState(state),150); }
-  async function saveState(state){
-    try {
-      const db = firebase.firestore();
-      const ref = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('playback_state').doc('main_state');
-      const safe = {
-        timestamp: Number(state.timestamp)||0,
-        url: String(state.url||''),
-        playlist: Array.isArray(state.playlist)? state.playlist.map(x=>({name:String(x.name||''), url:String(x.url||'')})) : [],
-        lastUpdatedBy: clientId,
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-      };
-      await ref.set(safe, { merge:true });
-    } catch(e){ log("<p class='fail'>✘ 상태 저장 실패: "+e.message+"</p>"); }
-  }
-
-  function startRealtime(){
-    const db = firebase.firestore();
-    const ref = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('playback_state').doc('main_state');
-    if (!endedHooked){ audio.addEventListener('ended', playRandom); endedHooked = true; }
-    ref.onSnapshot(snap=>{
-      if (!snap.exists) return;
-      const state = snap.data()||{};
-      if (state.lastUpdatedBy === clientId) return;
-      try{
-        suppress = true;
-        const list = Array.isArray(state.playlist)? state.playlist : [];
-        if (JSON.stringify(list)!==JSON.stringify(localPlaylist)){ localPlaylist = list; renderList(); }
-        if (state.url && audio.src!==state.url) audio.src = state.url;
-        const t = Number(state.timestamp)||0; if (Math.abs(audio.currentTime - t) > 1) audio.currentTime = t;
-      } finally { setTimeout(()=>{ suppress=false; },100); }
-    }, err=>{ log("<p class='fail'>✘ 구독 오류: "+err.message+"</p>"); });
-  }
-
-  function renderList(){
-    listEl.innerHTML='';
-    if (!localPlaylist.length){ listEl.innerHTML='<div class="muted">재생목록이 비어있습니다.</div>'; return; }
-    localPlaylist.forEach(item=>{
-      const div=document.createElement('div'); div.className='item';
-      div.innerHTML=`<span>${item.name}</span><span class="muted" style="font-size:.85rem">재생</span>`;
-      div.addEventListener('click', async ()=>{
-        try{ suppress=true; if (audio.src!==item.url) audio.src=item.url; audio.currentTime=0; await audio.play(); }
-        catch{} finally { suppress=false; }
-        debouncedSave(currentState());
+    // 익명 로그인 시도
+    firebase.auth().signInAnonymously()
+      .then(() => {
+        statusEl.textContent = "✅ Firebase 초기화 + 익명 로그인 성공";
+        // Firestore 테스트
+        return firebase.firestore().collection("test").doc("ping").set({ time: Date.now() });
+      })
+      .then(() => {
+        statusEl.textContent += "\n✅ Firestore 쓰기 성공";
+        return firebase.firestore().collection("test").doc("ping").get();
+      })
+      .then(doc => {
+        statusEl.textContent += "\n✅ Firestore 읽기 성공: " + JSON.stringify(doc.data());
+      })
+      .catch(err => {
+        statusEl.textContent = "❌ 에러 발생: " + err.code + " / " + err.message;
       });
-      listEl.appendChild(div);
-    });
-  }
-
-  function currentState(){ return { timestamp: audio.currentTime, url: audio.src, playlist: localPlaylist }; }
-  async function playRandom(){
-    if (!localPlaylist.length) return;
-    const i=Math.floor(Math.random()*localPlaylist.length), song=localPlaylist[i];
-    try{ suppress=true; if (audio.src!==song.url) audio.src=song.url; audio.currentTime=0; await audio.play(); }
-    catch{} finally { suppress=false; }
-    debouncedSave({ ...currentState(), url:song.url });
-  }
-
-  function wireUI(){
-    addBtn.addEventListener('click', ()=>{
-      const url=(urlInput.value||'').trim(); if(!url) return;
-      const name=url.split('/').pop()||'Unknown Track';
-      localPlaylist.push({name,url}); renderList(); debouncedSave(currentState()); urlInput.value='';
-    });
-    shuffleBtn.addEventListener('click', ()=>{ playRandom(); });
-    syncBtn.addEventListener('click', ()=>{ debouncedSave(currentState()); });
-    audio.addEventListener('seeked', ()=>{ if(!suppress) debouncedSave(currentState()); });
-  }
-
-  boot();
-</script>
+  </script>
 </body>
 </html>
