@@ -188,6 +188,7 @@
             loadingMessage.style.display = 'none';
             break;
         case YT.PlayerState.PLAYING:
+            // CRITICAL FIX: Save state only when the video starts playing
             debouncedSave(currentState());
             loadingMessage.style.display = 'none';
             break;
@@ -208,7 +209,8 @@
   }
 
   async function saveState(state) {
-    if (!state || !state.videoId) {
+    // CRITICAL FIX: Add a check to ensure state is valid before saving
+    if (!state || !state.videoId || !player) {
       console.error("State or videoId is undefined. Skipping save.");
       return;
     }
@@ -217,7 +219,7 @@
       const ref = db.collection('artifacts').doc(appId).collection('public')
         .doc('data').collection('playback_state').doc('main_state');
       const safe = {
-        timestamp: player ? player.getCurrentTime() : 0,
+        timestamp: player.getCurrentTime(),
         videoId: state.videoId,
         playlist: Array.isArray(state.playlist) ? state.playlist : [],
         lastUpdatedBy: clientId,
@@ -236,7 +238,6 @@
 
     ref.onSnapshot(async (snap) => {
       if (!snap.exists) {
-        // Firestore 문서가 존재하지 않을 경우 초기 상태를 저장
         debouncedSave(currentState());
         return;
       }
@@ -334,7 +335,6 @@
     if (!localPlaylist.length) {
       if (player && player.getPlayerState() !== YT.PlayerState.PAUSED) {
           player.pauseVideo();
-          debouncedSave(currentState());
       }
       return;
     }
@@ -357,7 +357,6 @@
           player.playVideo();
         }
       } catch {}
-      debouncedSave(currentState());
     }
   }
 
