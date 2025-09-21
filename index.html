@@ -37,7 +37,7 @@
       left: 0;
       width: 100%;
       height: 100%;
-      background: rgba(0, 0, 0, 0.7);
+      background: rgba(0, 0, 0, 0.1); /* 투명도를 낮춰서 투명하게 만듦 */
       pointer-events: auto; /* 이 부분이 중요합니다. 이제 클릭을 막습니다. */
       opacity: 1;
       transition: opacity 0.3s ease-in-out;
@@ -243,10 +243,11 @@
     switch (event.data) {
         case YT.PlayerState.ENDED:
             playNext();
+            showOverlay(); // 비디오가 끝나면 오버레이 표시
             break;
         case YT.PlayerState.PLAYING:
             debouncedSave(currentState());
-            hideOverlay();
+            // 재생 중에도 오버레이를 유지하도록 이 줄을 삭제함
             break;
         case YT.PlayerState.PAUSED:
             showOverlay();
