@@ -116,6 +116,7 @@
     lastUpdatedBy: null,
     currentPlayingIndex: -1,
     isBurstCallMode: false,
+    lastBurstCallTimestamp: 0,
   };
 
   let authed = false;
@@ -353,8 +354,20 @@
       // 재생목록 아이템 클릭 이벤트 리스너 추가
       div.addEventListener('click', () => {
         const videoId = div.dataset.videoId;
+        const now = Date.now();
+        const cooldownMs = 60 * 1000;
+
         if (globalState.isBurstCallMode) {
-          burstCall(videoId);
+          if (now - globalState.lastBurstCallTimestamp > cooldownMs) {
+            burstCall(videoId);
+            globalState.isBurstCallMode = false;
+            globalState.lastBurstCallTimestamp = now;
+            burstCallToggleBtn.classList.remove('active');
+            burstCallToggleBtn.textContent = '버스트콜 모드 (비활성화)';
+          } else {
+            const remaining = Math.ceil((cooldownMs - (now - globalState.lastBurstCallTimestamp)) / 1000);
+            showMessage(`버스트콜은 ${remaining}초 후에 다시 사용할 수 있습니다.`, 'info');
+          }
         } else {
           player.loadVideoById(videoId, 0);
           player.playVideo();
