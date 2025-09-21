@@ -22,12 +22,36 @@
     .item .delete-btn { background: none; border: none; color: #fc8181; cursor: pointer; font-size: 1.2em; line-height: 1; margin-left: 10px; opacity: 0.7; transition: opacity 0.2s; }
     .item .delete-btn:hover { opacity: 1; }
     .video-player { aspect-ratio: 16 / 9; width: 100%; max-width: 800px; margin: 8px auto; border-radius: 8px; overflow: hidden; position: relative; }
-    .video-player:after { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; cursor: not-allowed; }
     .main-title { text-align: center; }
     .sub-title { text-align: center; font-size: 0.9em; margin-top: -15px; color: #a0aec0; }
     .message-box { display: none; background: #2d3748; color: #fff; padding: 12px; border-radius: 8px; text-align: center; position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000; }
     .volume-controls { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
     .volume-controls .btn { padding: 0.5rem 1rem; }
+    
+    .video-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0, 0, 0, 0.7);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      cursor: pointer;
+      opacity: 1;
+      transition: opacity 0.3s ease-in-out;
+    }
+    .video-overlay.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+    .play-btn {
+      background-color: #4CAF50;
+      font-size: 1.5rem;
+      padding: 1rem 2rem;
+      border-radius: 10px;
+    }
   </style>
   <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
@@ -49,6 +73,9 @@
   <div class="card">
     <div class="video-player">
       <div id="player"></div>
+      <div id="video-overlay" class="video-overlay">
+        <button id="play-button" class="btn play-btn">재생</button>
+      </div>
     </div>
     
     <div class="row" style="margin-top:10px">
@@ -89,6 +116,7 @@
   const messageBox = document.getElementById('message-box');
   const volumeSlider = document.getElementById('volumeSlider');
   const volumeBtn = document.getElementById('volumeBtn');
+  const playButton = document.getElementById('play-button');
   
   // '사', '띵', '어' 글자에 해당하는 요소들을 ID로 지정
   const prevSongTrigger = document.getElementById('prev-song-trigger');
@@ -118,6 +146,14 @@
     setTimeout(() => {
       messageBox.style.display = 'none';
     }, 3000);
+  }
+
+  function showPlayButton() {
+    playButton.parentElement.classList.remove('hidden');
+  }
+
+  function hidePlayButton() {
+    playButton.parentElement.classList.add('hidden');
   }
 
   // ----- Firebase initialization + anonymous login + diagnostics -----
@@ -176,14 +212,18 @@
       }
     });
   }
+  
+  // Attempts to start playback when both player and data are ready.
+  function attemptInitialPlayback() {
+      if (playerReady && initialSyncDone && localPlaylist.length > 0) {
+          showPlayButton();
+      }
+  }
 
   // Called when the YouTube player is ready
   function onPlayerReady(event) {
     console.log('YouTube Player is ready.');
-    if (initialSyncDone && localPlaylist.length > 0) {
-        // Player is ready, and we already have a playlist from Firestore. Play the first song.
-        playVideo(0);
-    }
+    attemptInitialPlayback();
   }
 
   // Called when the YouTube player state changes
@@ -194,10 +234,15 @@
             break;
         case YT.PlayerState.PLAYING:
             debouncedSave(currentState());
+            hidePlayButton();
             break;
         case YT.PlayerState.PAUSED:
+            showPlayButton();
             break;
         case YT.PlayerState.BUFFERING:
+            break;
+        case YT.PlayerState.UNSTARTED:
+            showPlayButton();
             break;
     }
   }
@@ -262,11 +307,8 @@
             player.seekTo(state.timestamp, true);
         }
 
-        // Only start playback after the first sync is complete AND the player is ready.
-        if (!initialSyncDone && playerReady && localPlaylist.length > 0) {
-            playVideo(0); // Play the first song on initial load
-        }
         initialSyncDone = true;
+        attemptInitialPlayback();
 
       } catch (e) {
         console.error("Sync error:", e);
@@ -357,6 +399,7 @@
           player.loadVideoById(nextSong.videoId, 0);
           player.playVideo();
           currentPlayingIndex = index;
+          hidePlayButton();
         }
       } catch (e) {
         console.error("Error playing video:", e);
@@ -440,6 +483,14 @@
           volumeSlider.value = 0;
         }
       }
+    });
+
+    playButton.addEventListener('click', () => {
+        if (localPlaylist.length > 0) {
+            playVideo(0);
+        } else {
+            showMessage("재생목록이 비어있습니다. 먼저 곡을 추가해주세요.", 'info');
+        }
     });
 
     // '사' 클릭: 이전 곡
