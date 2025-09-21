@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Firebase 플레이어 테스트</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: sans-serif; background:#111; color:#eee; }
+    .panel { padding:16px; margin:12px 0; border:1px solid #444; border-radius:8px; }
+    .ok { color:lightgreen; }
+    .fail { color:salmon; }
+  </style>
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-app.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-auth.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.3/firebase-firestore.js"></script>
+</head>
+<body class="p-4">
+
+  <h1 class="text-xl font-bold mb-4">Firebase 연결 진단</h1>
+
+  <div id="status" class="panel">준비중...</div>
+
+  <script>
+    // 여기에 붙여넣기한 firebaseConfig
+    const firebaseConfig = {
+      "apiKey": "AIzaSyDcYL4IDbjuximgMUI7_XNElrqpkyV9YqLs",
+      "authDomain": "sarangbang-24dc2.firebaseapp.com",
+      "projectId": "sarangbang-24dc2",
+      "storageBucket": "sarangbang-24dc2.appspot.com",
+      "messagingSenderId": "122641770390",
+      "appId": "1:122641770390:web:df216317453f457f229fb7",
+      "measurementId": "G-P2TRBDXBW8"
+    };
+
+    const statusBox = document.getElementById("status");
+
+    async function runDiagnostics() {
+      try {
+        // 1. Firebase 초기화
+        const app = firebase.initializeApp(firebaseConfig);
+        statusBox.innerHTML = "<p class='ok'>✔ Firebase 초기화 성공</p>";
+
+        // 2. 익명 로그인 시도
+        const auth = firebase.auth();
+        await auth.signInAnonymously();
+        statusBox.innerHTML += "<p class='ok'>✔ 익명 로그인 성공</p>";
+
+        // 3. Firestore 테스트
+        const db = firebase.firestore();
+        const testRef = db.collection("artifacts").doc("default-app-id")
+                          .collection("public").doc("test_doc");
+
+        // 쓰기
+        await testRef.set({ ping: "pong", time: new Date() });
+        statusBox.innerHTML += "<p class='ok'>✔ Firestore 쓰기 성공</p>";
+
+        // 읽기
+        const snap = await testRef.get();
+        if (snap.exists) {
+          statusBox.innerHTML += "<p class='ok'>✔ Firestore 읽기 성공: " + JSON.stringify(snap.data()) + "</p>";
+        } else {
+          statusBox.innerHTML += "<p class='fail'>✘ Firestore 문서 읽기 실패</p>";
+        }
+
+      } catch (e) {
+        statusBox.innerHTML += "<p class='fail'>✘ 오류 발생: " + e.message + "</p>";
+        console.error(e);
+      }
+    }
+
+    runDiagnostics();
+  </script>
+
+</body>
+</html>
