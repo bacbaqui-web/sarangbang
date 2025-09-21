@@ -1,52 +1,75 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-  <meta charset="UTF-8">
-  <title>Firebase 연결 테스트</title>
-  <script src="https://www.gstatic.com/firebasejs/9.6.11/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.6.11/firebase-analytics-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.6.11/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.6.11/firebase-firestore-compat.js"></script>
+    <meta charset="UTF-8">
+    <title>Firebase 연결 테스트 (수정됨)</title>
+    <style>body{font-family:sans-serif;background:#222;color:#eee;padding:20px}pre{background:#111;padding:10px;border-radius:5px;white-space:pre-wrap;}</style>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-analytics-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore-compat.js"></script>
 </head>
 <body>
-  <h1>Firebase 연결 테스트</h1>
-  <pre id="status">초기화 중...</pre>
+    <h1>Firebase 연결 테스트</h1>
+    <pre id="status">진행 중...</pre>
 
-  <script>
-    // 사용자가 제공한 apiKey 그대로 넣은 firebaseConfig
-    const firebaseConfig = {
-      apiKey: "AIzaSyDz6xGJNKXinG5rREjdrPz7toIYGZXzilU",
-      authDomain: "sarangbangmusicplaylist.firebaseapp.com",
-      projectId: "sarangbangmusicplaylist",
-      storageBucket: "sarangbangmusicplaylist.appspot.com",
-      messagingSenderId: "193412502606",
-      appId: "1:193412502606:web:0f7f9ddbef1ee6711d1ff",
-      measurementId: "G-L14GH3BHYD"
-    };
+    <script>
+        const statusEl = document.getElementById('status');
+        const log = (msg) => { statusEl.textContent += "\n" + msg; };
 
-    // Firebase 초기화
-    firebase.initializeApp(firebaseConfig);
-    firebase.analytics();
+        // 올바른 API 키로 수정이 필요합니다.
+        const firebaseConfig = {
+            apiKey: "AIzaSyDz6xGJNXKinG5rREjdPz7toIYGZXziIU", // 이 값을 Firebase 콘솔에서 확인하여 수정하세요
+            authDomain: "sarangbangmusicplaylist.firebaseapp.com",
+            projectId: "sarangbangmusicplaylist",
+            storageBucket: "sarangbangmusicplaylist.appspot.com",
+            messagingSenderId: "193412502606",
+            appId: "1:193412502606:web:0f7f9ddbef1ee6711d1ff",
+            measurementId: "G-L14GH3BHYD"
+        };
 
-    const statusEl = document.getElementById('status');
+        async function runTests() {
+            log("🚀 Firebase 연결 테스트 시작...");
+            
+            try {
+                firebase.initializeApp(firebaseConfig);
+                log("✅ Firebase 초기화 성공");
+            } catch (err) {
+                log(`❌ 초기화 실패: ${err.code} / ${err.message}`);
+                return;
+            }
 
-    // 익명 로그인 시도
-    firebase.auth().signInAnonymously()
-      .then(() => {
-        statusEl.textContent = "✅ Firebase 초기화 + 익명 로그인 성공";
-        // Firestore 테스트
-        return firebase.firestore().collection("test").doc("ping").set({ time: Date.now() });
-      })
-      .then(() => {
-        statusEl.textContent += "\n✅ Firestore 쓰기 성공";
-        return firebase.firestore().collection("test").doc("ping").get();
-      })
-      .then(doc => {
-        statusEl.textContent += "\n✅ Firestore 읽기 성공: " + JSON.stringify(doc.data());
-      })
-      .catch(err => {
-        statusEl.textContent = "❌ 에러 발생: " + err.code + " / " + err.message;
-      });
-  </script>
+            try {
+                await firebase.auth().signInAnonymously();
+                log("✅ 익명 로그인 성공");
+            } catch (err) {
+                log(`❌ 익명 로그인 실패: ${err.code} / ${err.message}`);
+                // 'auth/operation-not-allowed' 오류는 익명 로그인이 비활성화되었음을 의미합니다.
+                if (err.code === 'auth/operation-not-allowed') {
+                    log("  👉 해결 방법: Firebase 콘솔 > Authentication 탭에서 익명 로그인을 활성화해주세요.");
+                }
+                return;
+            }
+
+            try {
+                const db = firebase.firestore();
+                const testRef = db.collection("test").doc("ping");
+                await testRef.set({ time: new Date() });
+                log("✅ Firestore 쓰기 성공");
+
+                const doc = await testRef.get();
+                log("✅ Firestore 읽기 성공");
+                log(`  👉 데이터: ${JSON.stringify(doc.data())}`);
+            } catch (err) {
+                log(`❌ Firestore 작업 실패: ${err.code} / ${err.message}`);
+                // 'permission-denied' 오류는 보안 규칙 설정이 필요함을 의미합니다.
+                if (err.code === 'permission-denied') {
+                    log("  👉 해결 방법: Firebase 콘솔 > Firestore Database > Rules 탭에서 보안 규칙을 설정해주세요.");
+                }
+            }
+        }
+        
+        runTests();
+    </script>
 </body>
 </html>
