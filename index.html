@@ -23,7 +23,8 @@
     .item:last-child { border-bottom: none; }
     .item .delete-btn { background: none; border: none; color: #fc8181; cursor: pointer; font-size: 1.2em; line-height: 1; margin-left: 10px; opacity: 0.7; transition: opacity 0.2s; }
     .item .delete-btn:hover { opacity: 1; }
-    .video-player { aspect-ratio: 16 / 9; width: 100%; max-width: 800px; margin: 8px auto; border-radius: 8px; overflow: hidden; }
+    .video-player { aspect-ratio: 16 / 9; width: 100%; max-width: 800px; margin: 8px auto; border-radius: 8px; overflow: hidden; position: relative; }
+    .video-player:after { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; cursor: not-allowed; }
     h1 { text-align: center; }
     .message-box { display: none; background: #2d3748; color: #fff; padding: 12px; border-radius: 8px; text-align: center; position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000; }
   </style>
@@ -39,14 +40,7 @@
 <div class="wrap">
   <h1>유튜브 셔플 플레이어</h1>
   
-  <div class="card" id="diag">준비중…</div>
-  
   <div class="card">
-    <div class="row" style="justify-content:space-between">
-      <div>사용자 ID: <span id="uid" class="muted">-</span></div>
-      <div id="conn" class="muted">오프라인</div>
-    </div>
-    
     <div class="video-player">
       <div id="player"></div>
     </div>
@@ -65,7 +59,6 @@
 </div>
 
 <script>
-  // 이 API 키를 유튜브 Data API를 활성화한 키로 변경해주세요.
   const YOUTUBE_API_KEY = "AIzaSyB2GymrywkBYx4Mbt_xHNiYEV44MbfKY2w";
   
   const firebaseConfig = {
@@ -79,9 +72,6 @@
   };
 
   // ----- 요소 -----
-  const diag = document.getElementById('diag');
-  const uidEl = document.getElementById('uid');
-  const connEl = document.getElementById('conn');
   const urlInput = document.getElementById('url');
   const addBtn = document.getElementById('add');
   const shuffleBtn = document.getElementById('shuffle');
@@ -98,9 +88,6 @@
   let localPlaylist = [];
   let player;
   let playerReady = false;
-
-  function log(html) { diag.innerHTML += html; }
-  function setDiag(html) { diag.innerHTML = html; }
 
   function showMessage(message, type = 'info') {
     messageBox.textContent = message;
@@ -119,23 +106,18 @@
   async function boot() {
     try {
       firebase.initializeApp(firebaseConfig);
-      setDiag("<p class='ok'>✔ Firebase 초기화 성공</p>");
+      console.log("Firebase 초기화 성공");
     } catch (e) {
-      setDiag("<p class='fail'>✘ 초기화 실패: " + e.message + "</p>");
+      console.error("Firebase 초기화 실패: " + e.message);
       return;
     }
 
     try {
       await firebase.auth().signInAnonymously();
       authed = true;
-      uidEl.textContent = firebase.auth().currentUser.uid;
-      connEl.textContent = '온라인';
-      log("<p class='ok'>✔ 익명 로그인 성공</p>");
+      console.log("익명 로그인 성공, 사용자 ID:", firebase.auth().currentUser.uid);
     } catch (e) {
-      log("<p class='fail'>✘ 인증 실패: " + e.message + "</p>");
-      if (String(e.message).includes('operation-not-allowed')) {
-        log("<p class='fail'>Authentication > 익명 로그인 활성화 필요</p>");
-      }
+      console.error("인증 실패: " + e.message);
       return;
     }
 
@@ -144,9 +126,9 @@
     try {
       const pingRef = db.collection('artifacts').doc(appId).collection('public').doc('_ping');
       await pingRef.set({ pong: true, by: clientId, at: new Date() }, { merge: true });
-      log("<p class='ok'>✔ Firestore 쓰기 성공</p>");
+      console.log("Firestore 쓰기 성공");
     } catch (e) {
-      log("<p class='fail'>✘ Firestore 쓰기 실패: " + e.message + "</p>");
+      console.error("Firestore 쓰기 실패: " + e.message);
     }
 
     startRealtime();
@@ -160,6 +142,16 @@
       height: '100%',
       width: '100%',
       videoId: '',
+      playerVars: {
+        'autoplay': 1,
+        'controls': 0,
+        'disablekb': 1,
+        'fs': 0,
+        'iv_load_policy': 3,
+        'modestbranding': 1,
+        'rel': 0,
+        'showinfo': 0
+      },
       events: {
         'onStateChange': onPlayerStateChange
       }
@@ -202,7 +194,7 @@
       };
       await ref.set(safe, { merge: true });
     } catch (e) {
-      log("<p class='fail'>✘ 상태 저장 실패: " + e.message + "</p>");
+      console.error("상태 저장 실패: " + e.message);
     }
   }
 
@@ -236,7 +228,7 @@
       } finally {
         setTimeout(() => { suppress = false; }, 500);
       }
-    }, (err) => { log("<p class='fail'>✘ 구독 오류: " + err.message + "</p>"); });
+    }, (err) => { console.error("구독 오류: " + err.message); });
   }
 
   // ----- UI/플레이어 -----
@@ -281,9 +273,6 @@
 
   // 유튜브 Data API를 호출하여 동영상 제목과 채널명을 가져오는 함수
   async function fetchVideoDetails(videoId) {
-    if (YOUTUBE_API_KEY === "YOUR_YOUTUBE_DATA_API_KEY_HERE") {
-        throw new Error("유튜브 Data API 키를 설정해주세요.");
-    }
     const apiUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${videoId}&key=${YOUTUBE_API_KEY}`;
     const response = await fetch(apiUrl);
     const data = await response.json();
