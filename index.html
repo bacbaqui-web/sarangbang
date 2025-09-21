@@ -274,6 +274,8 @@
                 globalState.timestamp = player.getCurrentTime();
                 savePlaybackState();
             }
+            // 수정: 재생 중일 때도 오버레이를 유지하도록 이 줄을 제거함
+            // hideOverlay(); 
             break;
         case YT.PlayerState.PAUSED:
             globalState.timestamp = player.getCurrentTime();
