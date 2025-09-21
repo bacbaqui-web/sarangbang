@@ -11,14 +11,12 @@
     .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
     .btn { background: #48bb78; color: #fff; border: 0; border-radius: 999px; padding: .6rem 1rem; cursor: pointer; transition: background 0.2s; }
     .btn:hover { background: #38a169; }
-    .btn.sec { background: #4a5568; }
-    .btn.sec:hover { background: #2d3748; }
     .ok { color: #68d391; }
     .fail { color: #fc8181; }
     .muted { color: #a0aec0; }
     input { background: #1f2937; color: #eee; border: 1px solid #374151; border-radius: 8px; padding: .55rem .7rem; flex: 1; min-width: 220px; outline: none; transition: border-color 0.2s; }
     input:focus { border-color: #48bb78; }
-    .item { display: flex; justify-content: space-between; align-items: center; padding: .5rem .6rem; border-bottom: 1px solid #2f3743; cursor: pointer; }
+    .item { display: flex; justify-content: space-between; align-items: center; padding: .5rem .6rem; border-bottom: 1px solid #2f3743; cursor: default; }
     .item:hover { background: #2a3340; }
     .item:last-child { border-bottom: none; }
     .item .delete-btn { background: none; border: none; color: #fc8181; cursor: pointer; font-size: 1.2em; line-height: 1; margin-left: 10px; opacity: 0.7; transition: opacity 0.2s; }
@@ -48,7 +46,6 @@
     <div class="row" style="margin-top:10px">
       <input id="url" placeholder="유튜브 링크 또는 ID를 붙여넣기"/>
       <button id="add" class="btn">추가</button>
-      <button id="sync" class="btn sec">동기화</button>
     </div>
     
     <div id="playlist" class="card" style="margin:10px 0 0 0">
@@ -73,7 +70,6 @@
   // ----- 요소 -----
   const urlInput = document.getElementById('url');
   const addBtn = document.getElementById('add');
-  const syncBtn = document.getElementById('sync');
   const listEl = document.getElementById('playlist');
   const messageBox = document.getElementById('message-box');
 
@@ -85,7 +81,7 @@
   let localPlaylist = [];
   let player;
   let playerReady = false;
-  let currentVideoId = ''; // 현재 재생 중인 비디오 ID를 추적하는 변수
+  let currentVideoId = ''; 
 
   function showMessage(message, type = 'info') {
     messageBox.textContent = message;
@@ -131,8 +127,6 @@
 
     startRealtime();
     wireUI();
-    // 접속하자마자 최신 상태 동기화
-    syncStateFromFirestore();
   }
 
   // 유튜브 플레이어 API가 로드되면 호출되는 함수
@@ -160,7 +154,6 @@
 
   // 유튜브 플레이어 상태 변경 시 호출
   function onPlayerStateChange(event) {
-    // 비디오 재생이 끝났을 때만 다음 곡 재생
     if (event.data === YT.PlayerState.ENDED) {
       playNext();
     }
@@ -170,7 +163,7 @@
   function debouncedSave(state) {
     if (!authed || !playerReady) return;
     if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => saveState(state), 300); // 디바운스 시간 늘림
+    saveTimer = setTimeout(() => saveState(state), 300);
   }
 
   async function saveState(state) {
@@ -195,30 +188,6 @@
     }
   }
 
-  // 동기화 버튼을 눌렀을 때 최신 상태를 불러와 적용하는 함수
-  async function syncStateFromFirestore() {
-      if (!authed) return;
-      const db = firebase.firestore();
-      const ref = db.collection('artifacts').doc(appId).collection('public')
-        .doc('data').collection('playback_state').doc('main_state');
-      
-      try {
-          const doc = await ref.get();
-          if (doc.exists) {
-              const state = doc.data();
-              if (playerReady && state.videoId) {
-                  player.loadVideoById(state.videoId);
-                  player.seekTo(state.timestamp, true);
-                  player.playVideo();
-                  debouncedSave(currentState());
-              }
-          }
-      } catch (e) {
-          console.error("상태 동기화 실패: " + e.message);
-          showMessage("동기화에 실패했습니다.", 'error');
-      }
-  }
-
   function startRealtime() {
     const db = firebase.firestore();
     const ref = db.collection('artifacts').doc(appId).collection('public')
@@ -234,8 +203,17 @@
           localPlaylist = remoteList;
           renderList();
         }
-      } finally {
-        // No auto-sync on snapshot change. User must press 'sync' button.
+
+        // 항상 최신 재생 상태를 따라가도록 자동 동기화
+        if (playerReady && state.videoId) {
+          if (player.getVideoData().video_id !== state.videoId) {
+            player.loadVideoById(state.videoId);
+          }
+          player.seekTo(state.timestamp, true);
+          player.playVideo();
+        }
+      } catch (e) {
+        console.error("동기화 오류:", e);
       }
     }, (err) => { console.error("구독 오류: " + err.message); });
   }
@@ -265,14 +243,12 @@
   }
 
   function getVideoId(url) {
-    // 유튜브 뮤직 링크를 일반 유튜브 링크로 변환
     url = url.replace('music.youtube.com', 'www.youtube.com');
     const regex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i;
     const match = url.match(regex);
     return (match && match[1]) ? match[1] : null;
   }
 
-  // 유튜브 Data API를 호출하여 동영상 제목과 채널명을 가져오는 함수
   async function fetchVideoDetails(videoId) {
     const apiUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${videoId}&key=${YOUTUBE_API_KEY}`;
     const response = await fetch(apiUrl);
@@ -308,7 +284,6 @@
 
   async function playNext() {
     if (!localPlaylist.length) {
-      // 재생목록이 비어있으면 재생 중단하고 상태 저장
       if (player && player.getPlayerState() !== YT.PlayerState.PAUSED) {
           player.pauseVideo();
           debouncedSave(currentState());
@@ -321,10 +296,8 @@
     const lastSong = localPlaylist[localPlaylist.length - 1];
 
     if (lastSong && lastSong.videoId !== currentVideo) {
-      // 새로운 곡이 추가되었다면 그 곡을 다음으로 재생
       nextSong = lastSong;
     } else {
-      // 새로운 곡이 없으면 랜덤으로 재생
       const randomIdx = Math.floor(Math.random() * localPlaylist.length);
       nextSong = localPlaylist[randomIdx];
     }
@@ -360,7 +333,6 @@
         });
         renderList();
         
-        // 새 노래가 추가될 때만 상태를 저장하여 모든 사용자에게 동기화
         debouncedSave(currentState());
         urlInput.value = '';
       } catch (e) {
@@ -369,10 +341,6 @@
         addBtn.textContent = '추가';
         addBtn.disabled = false;
       }
-    });
-
-    syncBtn.addEventListener('click', () => { 
-        syncStateFromFirestore();
     });
   }
 
