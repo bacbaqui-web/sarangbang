@@ -88,6 +88,7 @@
   let localPlaylist = [];
   let player;
   let playerReady = false;
+  let currentVideoId = ''; // 현재 재생 중인 비디오 ID를 추적하는 변수
 
   function showMessage(message, type = 'info') {
     messageBox.textContent = message;
@@ -160,8 +161,11 @@
 
   // 유튜브 플레이어 상태 변경 시 호출
   function onPlayerStateChange(event) {
-    if (!suppress) {
-      debouncedSave(currentState());
+    if (event.data === YT.PlayerState.PLAYING) {
+      currentVideoId = player.getVideoData().video_id;
+      if (!suppress) {
+        debouncedSave(currentState());
+      }
     }
     // 비디오 재생이 끝났을 때
     if (event.data === YT.PlayerState.ENDED) {
@@ -217,7 +221,8 @@
           renderList();
         }
 
-        if (playerReady && state.videoId && player.getVideoUrl() !== 'https://www.youtube.com/watch?v=' + state.videoId) {
+        // 비디오 ID가 변경된 경우에만 새로 로드
+        if (playerReady && state.videoId && state.videoId !== currentVideoId) {
           player.loadVideoById(state.videoId);
         }
 
