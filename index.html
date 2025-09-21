@@ -28,29 +28,42 @@
     .volume-controls { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
     .volume-controls .btn { padding: 0.5rem 1rem; }
     
-    .video-overlay {
+    #player { pointer-events: auto; }
+
+    /* 유튜브 전체를 덮는 투명한 오버레이 */
+    .video-overlay-unclickable {
       position: absolute;
       top: 0;
       left: 0;
       width: 100%;
       height: 100%;
       background: rgba(0, 0, 0, 0.7);
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      cursor: pointer;
+      pointer-events: auto; /* 이 부분이 중요합니다. 이제 클릭을 막습니다. */
       opacity: 1;
       transition: opacity 0.3s ease-in-out;
+      z-index: 10;
     }
-    .video-overlay.hidden {
+    .video-overlay-unclickable.hidden {
       opacity: 0;
       pointer-events: none;
     }
-    .play-btn {
-      background-color: #4CAF50;
-      font-size: 1.5rem;
-      padding: 1rem 2rem;
+    
+    /* 중앙에 뚫린 네모 영역 */
+    .video-overlay-hole {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 100px; /* 네모 크기 조절 */
+      height: 100px;
+      pointer-events: auto; /* 이 영역만 클릭 활성화 */
+      cursor: pointer;
+      z-index: 11; /* unclickable 오버레이보다 위로 */
       border-radius: 10px;
+    }
+    
+    .video-overlay-hole.hidden {
+      pointer-events: none;
     }
   </style>
   <!-- Firebase SDK -->
@@ -65,7 +78,7 @@
 <div class="wrap">
   <div class="main-title">
     <h1 id="title-text">
-      <span id="prev-song-trigger">사</span>랑방 <span id="play-song-trigger">띵</span>곡 플레이<span id="next-song-trigger">어</span>
+      <span id="prev-song-trigger">사</span>랑방 띵곡 플레이<span id="next-song-trigger">어</span>
     </h1>
     <p class="sub-title">작가님들의 띵곡을 추천해주세요</p>
   </div>
@@ -73,9 +86,9 @@
   <div class="card">
     <div class="video-player">
       <div id="player"></div>
-      <div id="video-overlay" class="video-overlay">
-        <button id="play-button" class="btn play-btn">재생</button>
-      </div>
+      <!-- 오버레이 추가 -->
+      <div id="video-overlay-unclickable" class="video-overlay-unclickable"></div>
+      <div id="video-overlay-hole" class="video-overlay-hole"></div>
     </div>
     
     <div class="row" style="margin-top:10px">
@@ -116,11 +129,11 @@
   const messageBox = document.getElementById('message-box');
   const volumeSlider = document.getElementById('volumeSlider');
   const volumeBtn = document.getElementById('volumeBtn');
-  const playButton = document.getElementById('play-button');
+  const videoOverlayUnclickable = document.getElementById('video-overlay-unclickable');
+  const videoOverlayHole = document.getElementById('video-overlay-hole');
   
-  // '사', '띵', '어' 글자에 해당하는 요소들을 ID로 지정
+  // '사', '어' 글자에 해당하는 요소들을 ID로 지정
   const prevSongTrigger = document.getElementById('prev-song-trigger');
-  const playSongTrigger = document.getElementById('play-song-trigger');
   const nextSongTrigger = document.getElementById('next-song-trigger');
 
   // ----- state/guards -----
@@ -134,7 +147,7 @@
   let initialSyncDone = false;
   let lastVolume = 100;
   let currentPlayingIndex = -1;
-  let isInitialPlayHandled = false; // 새로운 상태 변수 추가
+  
 
   function showMessage(message, type = 'info') {
     messageBox.textContent = message;
@@ -149,12 +162,14 @@
     }, 3000);
   }
 
-  function showPlayButton() {
-    playButton.parentElement.classList.remove('hidden');
+  function showOverlay() {
+    videoOverlayUnclickable.classList.remove('hidden');
+    videoOverlayHole.classList.remove('hidden');
   }
 
-  function hidePlayButton() {
-    playButton.parentElement.classList.add('hidden');
+  function hideOverlay() {
+    videoOverlayUnclickable.classList.add('hidden');
+    videoOverlayHole.classList.add('hidden');
   }
 
   // ----- Firebase initialization + anonymous login + diagnostics -----
@@ -190,7 +205,7 @@
     wireUI();
   }
 
-  // Called when the YouTube Iframe Player API is loaded
+  // Called when the YouTube iFrame Player API is loaded
   function onYouTubeIframeAPIReady() {
     playerReady = true;
     player = new YT.Player('player', {
@@ -198,8 +213,8 @@
       width: '100%',
       videoId: '',
       playerVars: {
-        'autoplay': 1,
-        'controls': 0,
+        'autoplay': 0, 
+        'controls': 1,
         'disablekb': 1,
         'fs': 0,
         'iv_load_policy': 3,
@@ -214,40 +229,27 @@
     });
   }
   
-  // Attempts to start playback when both player and data are ready.
-  function attemptInitialPlayback() {
-      // isInitialPlayHandled 플래그를 추가하여 한 번만 실행되도록 합니다.
-      if (playerReady && initialSyncDone && localPlaylist.length > 0 && !isInitialPlayHandled) {
-          showPlayButton();
-      }
-  }
-
   // Called when the YouTube player is ready
   function onPlayerReady(event) {
     console.log('YouTube Player is ready.');
-    attemptInitialPlayback();
+    if (localPlaylist.length > 0) {
+        showOverlay();
+    }
   }
 
   // Called when the YouTube player state changes
   function onPlayerStateChange(event) {
+    console.log('Player state changed:', event.data);
     switch (event.data) {
         case YT.PlayerState.ENDED:
             playNext();
             break;
         case YT.PlayerState.PLAYING:
             debouncedSave(currentState());
-            hidePlayButton();
+            hideOverlay();
             break;
         case YT.PlayerState.PAUSED:
-            showPlayButton();
-            break;
-        case YT.PlayerState.BUFFERING:
-            break;
-        case YT.PlayerState.UNSTARTED:
-            // isInitialPlayHandled가 false일 때만 재생 버튼을 보여줍니다.
-            if (!isInitialPlayHandled) {
-                showPlayButton();
-            }
+            showOverlay();
             break;
     }
   }
@@ -260,7 +262,7 @@
   }
 
   async function saveState(state) {
-    if (!state || !state.videoId || !player) {
+    if (!state || !state.videoId) {
       console.error("State or videoId is undefined. Skipping save.");
       return;
     }
@@ -268,7 +270,6 @@
       const db = firebase.firestore();
       const ref = db.collection('artifacts').doc(appId).collection('public')
         .doc('data').collection('playback_state').doc('main_state');
-      // 현재 재생 시간을 가져오고, 유효하지 않은 값일 경우 0으로 기본값 설정
       const currentTime = player.getCurrentTime() || 0;
       const safe = {
         timestamp: currentTime,
@@ -313,7 +314,6 @@
         }
 
         initialSyncDone = true;
-        attemptInitialPlayback();
 
       } catch (e) {
         console.error("Sync error:", e);
@@ -326,14 +326,17 @@
     listEl.innerHTML = '';
     if (!localPlaylist.length) {
       listEl.innerHTML = '<div class="muted">재생목록이 비어있습니다.</div>';
+      showOverlay();
       return;
     }
+    
     localPlaylist.forEach((item, index) => {
       const div = document.createElement('div');
       div.className = 'item';
       div.innerHTML = `<span>${item.artist} - ${item.title}</span><button class="delete-btn" data-index="${index}">&#x2715;</button>`;
       
       div.querySelector('.delete-btn').addEventListener('click', (e) => {
+        e.stopPropagation();
         const index = parseInt(e.target.dataset.index, 10);
         localPlaylist.splice(index, 1);
         renderList();
@@ -342,6 +345,13 @@
       
       listEl.appendChild(div);
     });
+    
+    if (localPlaylist.length > 0 && !player.getVideoData()) {
+        playVideo(0);
+        hideOverlay();
+    } else {
+        showOverlay();
+    }
   }
 
   function getVideoId(url) {
@@ -385,7 +395,10 @@
   }
 
   function playVideo(index) {
-    if (localPlaylist.length === 0) return;
+    if (localPlaylist.length === 0) {
+      showMessage("재생목록이 비어있습니다. 먼저 곡을 추가해주세요.", 'info');
+      return;
+    }
 
     if (index >= localPlaylist.length) {
       index = 0;
@@ -400,7 +413,6 @@
           player.loadVideoById(nextSong.videoId, 0);
           player.playVideo();
           currentPlayingIndex = index;
-          hidePlayButton();
         }
       } catch (e) {
         console.error("Error playing video:", e);
@@ -410,9 +422,6 @@
 
   function playNext() {
     if (localPlaylist.length === 0) {
-      if (player && player.getPlayerState() !== YT.PlayerState.PAUSED) {
-        player.pauseVideo();
-      }
       return;
     }
     
@@ -422,9 +431,6 @@
 
   function playPrev() {
     if (localPlaylist.length === 0) {
-      if (player && player.getPlayerState() !== YT.PlayerState.PAUSED) {
-        player.pauseVideo();
-      }
       return;
     }
     
@@ -486,29 +492,19 @@
       }
     });
 
-    playButton.addEventListener('click', () => {
+    // 중앙 네모 오버레이 클릭 시 재생
+    videoOverlayHole.addEventListener('click', () => {
         if (localPlaylist.length > 0) {
-            isInitialPlayHandled = true; // 최초 재생 버튼 클릭 시 플래그를 true로 설정
             playVideo(0);
         } else {
             showMessage("재생목록이 비어있습니다. 먼저 곡을 추가해주세요.", 'info');
         }
     });
-
+    
     // '사' 클릭: 이전 곡
     prevSongTrigger.addEventListener('click', () => {
         playPrev();
         showMessage("이전 곡으로 넘어갑니다.");
-    });
-
-    // '띵' 클릭: 현재 곡 재생
-    playSongTrigger.addEventListener('click', () => {
-        if (player && player.getVideoData() && player.getPlayerState() !== YT.PlayerState.UNSTARTED) {
-            player.seekTo(0, true);
-            showMessage("현재 곡을 다시 재생합니다.");
-        } else {
-            showMessage("재생 중인 곡이 없습니다.");
-        }
     });
 
     // '어' 클릭: 다음 곡
