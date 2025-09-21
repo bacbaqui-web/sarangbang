@@ -95,6 +95,14 @@
       <input id="url" placeholder="유튜브 링크 또는 ID를 붙여넣기"/>
       <button id="add" class="btn">추가</button>
     </div>
+    <div id="manual-input" style="display:none; margin-top: 10px;">
+      <div class="row">
+        <input id="manualTitle" placeholder="제목을 수동으로 입력해주세요"/>
+      </div>
+      <div class="row" style="margin-top: 10px;">
+        <input id="manualArtist" placeholder="아티스트를 수동으로 입력해주세요"/>
+      </div>
+    </div>
     
     <div class="playback-controls">
       <button id="volumeBtn" class="btn">
@@ -110,8 +118,13 @@
 </div>
 
 <script>
+  // --- 중요: 유튜브 API 키를 여기에 입력하세요 ---
+  // 이 오류는 API 키 사용량이 초과되었거나 키가 잘못되었을 때 발생합니다.
+  // 직접 발급받은 API 키가 있다면 아래 변수의 값을 교체해주세요.
+  // https://console.cloud.google.com/apis/credentials
   const YOUTUBE_API_KEY = "AIzaSyB2GymrywkBYx4Mbt_xHNiYEV44MbfKY2w";
   
+  // Firebase configuration
   const firebaseConfig = {
     apiKey: "AIzaSyDz6xGJNKXinG5rREjdrPz7toIYGZXzilU",
     authDomain: "sarangbangmusicplaylist.firebaseapp.com",
@@ -131,23 +144,31 @@
   const volumeBtn = document.getElementById('volumeBtn');
   const videoOverlayUnclickable = document.getElementById('video-overlay-unclickable');
   const videoOverlayHole = document.getElementById('video-overlay-hole');
+  const manualInputDiv = document.getElementById('manual-input');
+  const manualTitleInput = document.getElementById('manualTitle');
+  const manualArtistInput = document.getElementById('manualArtist');
   
-  // '사', '어' 글자에 해당하는 요소들을 ID로 지정
   const prevSongTrigger = document.getElementById('prev-song-trigger');
   const nextSongTrigger = document.getElementById('next-song-trigger');
 
   // ----- state/guards -----
   const appId = 'default-app-id';
   const clientId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Math.random());
+  
+  // Centralized state management
+  const globalState = {
+    playlist: [],
+    videoId: '',
+    timestamp: 0,
+    lastUpdatedBy: null,
+    lastVolume: 100,
+    currentPlayingIndex: -1,
+  };
+
   let authed = false;
-  let saveTimer = null;
-  let localPlaylist = [];
   let player;
   let playerReady = false;
-  let initialSyncDone = false;
-  let lastVolume = 100;
-  let currentPlayingIndex = -1;
-  
+  let isManuallyAdding = false;
 
   function showMessage(message, type = 'info') {
     messageBox.textContent = message;
@@ -232,7 +253,7 @@
   // Called when the YouTube player is ready
   function onPlayerReady(event) {
     console.log('YouTube Player is ready.');
-    if (localPlaylist.length > 0) {
+    if (globalState.playlist.length > 0) {
         showOverlay();
     }
   }
@@ -246,91 +267,130 @@
             showOverlay();
             break;
         case YT.PlayerState.PLAYING:
-            debouncedSave(currentState());
+            // 동영상 ID가 로드된 후에만 상태를 업데이트하고 저장합니다.
+            const currentVideoId = player.getVideoData().video_id;
+            if (currentVideoId && currentVideoId.length === 11) {
+                globalState.videoId = currentVideoId;
+                globalState.timestamp = player.getCurrentTime();
+                savePlaybackState();
+            }
             break;
         case YT.PlayerState.PAUSED:
+            globalState.timestamp = player.getCurrentTime();
+            savePlaybackState();
             showOverlay();
             break;
     }
   }
 
-  // ----- save/sync -----
-  function debouncedSave(state) {
-    if (!authed || !playerReady) return;
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(() => saveState(state), 300);
+  // ----- save/sync functions -----
+
+  // 재생 상태(videoId, timestamp)만 저장하는 함수
+  let playbackSaveTimer = null;
+  function savePlaybackState() {
+    if (!authed) return;
+    if (playbackSaveTimer) clearTimeout(playbackSaveTimer);
+    playbackSaveTimer = setTimeout(async () => {
+      try {
+        const db = firebase.firestore();
+        const ref = db.collection('artifacts').doc(appId).collection('public')
+          .doc('data').collection('playback_state').doc('main_state');
+        
+        await ref.set({
+          videoId: globalState.videoId,
+          timestamp: globalState.timestamp,
+          lastUpdatedBy: clientId,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+
+        console.log('Playback state saved successfully.');
+      } catch (e) {
+        console.error("Failed to save playback state: " + e.message);
+      }
+    }, 300);
   }
 
-  async function saveState(state) {
-    if (!state || !state.videoId) {
-      console.error("State or videoId is undefined. Skipping save.");
-      return;
-    }
-    try {
-      const db = firebase.firestore();
-      const ref = db.collection('artifacts').doc(appId).collection('public')
-        .doc('data').collection('playback_state').doc('main_state');
-      const currentTime = player.getCurrentTime() || 0;
-      const safe = {
-        timestamp: currentTime,
-        videoId: state.videoId,
-        playlist: Array.isArray(state.playlist) ? state.playlist : [],
-        lastUpdatedBy: clientId,
-        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-      };
-      await ref.set(safe, { merge: true });
-    } catch (e) {
-      console.error("Failed to save state: " + e.message);
-    }
+  // 재생목록(playlist)만 저장하는 함수
+  let playlistSaveTimer = null;
+  function savePlaylistState() {
+    if (!authed) return;
+    if (playlistSaveTimer) clearTimeout(playlistSaveTimer);
+    playlistSaveTimer = setTimeout(async () => {
+      try {
+        const db = firebase.firestore();
+        const ref = db.collection('artifacts').doc(appId).collection('public')
+          .doc('data').collection('playlist_state').doc('main_playlist');
+
+        await ref.set({
+          playlist: globalState.playlist,
+          lastUpdatedBy: clientId,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+
+        console.log('Playlist state saved successfully.');
+      } catch (e) {
+        console.error("Failed to save playlist state: " + e.message);
+      }
+    }, 300);
   }
 
   function startRealtime() {
     const db = firebase.firestore();
-    const ref = db.collection('artifacts').doc(appId).collection('public')
-      .doc('data').collection('playback_state').doc('main_state');
 
-    ref.onSnapshot(async (snap) => {
-      if (!snap.exists) {
-        debouncedSave(currentState());
-        return;
-      }
+    // 재생 상태 실시간 동기화
+    const playbackRef = db.collection('artifacts').doc(appId).collection('public')
+      .doc('data').collection('playback_state').doc('main_state');
+    
+    playbackRef.onSnapshot(async (snap) => {
+      if (!snap.exists) return;
       const state = snap.data() || {};
       
-      if (state.lastUpdatedBy === clientId) {
-          return;
-      }
+      if (state.lastUpdatedBy === clientId) return;
 
       try {
-        const remoteList = Array.isArray(state.playlist) ? state.playlist : [];
-        if (JSON.stringify(remoteList) !== JSON.stringify(localPlaylist)) {
-          localPlaylist = remoteList;
-          renderList();
-        }
-        
-        const playerVideoId = player.getVideoData()?.video_id;
-        if (playerReady && state.videoId && playerVideoId !== state.videoId) {
+        if (playerReady && state.videoId && globalState.videoId !== state.videoId) {
             player.loadVideoById(state.videoId);
             player.seekTo(state.timestamp, true);
         }
-
-        initialSyncDone = true;
-
       } catch (e) {
-        console.error("Sync error:", e);
+        console.error("Playback sync error:", e);
       }
-    }, (err) => { console.error("Subscription error: " + err.message); });
+    }, (err) => { console.error("Playback subscription error: " + err.message); });
+
+    // 재생 목록 실시간 동기화
+    const playlistRef = db.collection('artifacts').doc(appId).collection('public')
+      .doc('data').collection('playlist_state').doc('main_playlist');
+
+    playlistRef.onSnapshot(async (snap) => {
+      if (!snap.exists) {
+        savePlaylistState();
+        return;
+      }
+      const playlistData = snap.data() || {};
+      if (playlistData.lastUpdatedBy === clientId) return;
+      
+      globalState.playlist = Array.isArray(playlistData.playlist) ? playlistData.playlist : [];
+      renderList();
+    }, (err) => { console.error("Playlist subscription error: " + err.message); });
+  }
+
+  // Updates the playlist in the global state and triggers a save
+  function updatePlaylist(newPlaylist) {
+    globalState.playlist = newPlaylist;
+    renderList();
+    savePlaylistState();
   }
 
   // ----- UI/player -----
   function renderList() {
     listEl.innerHTML = '';
-    if (!localPlaylist.length) {
+    if (!globalState.playlist.length) {
       listEl.innerHTML = '<div class="muted">재생목록이 비어있습니다.</div>';
       showOverlay();
       return;
     }
     
-    localPlaylist.forEach((item, index) => {
+    globalState.playlist.forEach((item, index) => {
       const div = document.createElement('div');
       div.className = 'item';
       div.innerHTML = `<span>${item.artist} - ${item.title}</span><button class="delete-btn" data-index="${index}">&#x2715;</button>`;
@@ -338,23 +398,29 @@
       div.querySelector('.delete-btn').addEventListener('click', (e) => {
         e.stopPropagation();
         const index = parseInt(e.target.dataset.index, 10);
-        localPlaylist.splice(index, 1);
-        renderList();
-        debouncedSave(currentState());
+        const newPlaylist = [...globalState.playlist];
+        newPlaylist.splice(index, 1);
+        updatePlaylist(newPlaylist);
       });
       
       listEl.appendChild(div);
     });
     
-    if (localPlaylist.length > 0 && !player.getVideoData()) {
-        playVideo(0);
+    if (globalState.playlist.length > 0 && (!player || !player.getVideoData())) {
+        playRandomVideo();
         hideOverlay();
     } else {
         showOverlay();
     }
   }
 
+  // 수정: 순수 ID와 URL을 모두 처리하도록 로직 변경
   function getVideoId(url) {
+    // 1. 먼저 순수 11자리 ID인지 확인
+    if (url.length === 11 && !url.includes(' ')) {
+      return url;
+    }
+    // 2. 아니면 기존의 URL 정규식 검사 수행
     url = url.replace('music.youtube.com', 'www.youtube.com');
     const regex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i;
     const match = url.match(regex);
@@ -364,11 +430,16 @@
   async function fetchVideoDetails(videoId) {
     const apiUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${videoId}&key=${YOUTUBE_API_KEY}`;
     const response = await fetch(apiUrl);
+    if (!response.ok) {
+        // Handle API errors gracefully
+        throw new Error(`API Error: ${response.status} ${response.statusText}`);
+    }
     const data = await response.json();
     if (data.items && data.items.length > 0) {
       const snippet = data.items[0].snippet;
       return {
         title: snippet.title,
+        // 수정: API 응답에서 channelTitle을 artist로 사용
         artist: snippet.channelTitle
       };
     } else {
@@ -376,43 +447,25 @@
     }
   }
 
-  function currentState() {
-    let videoId = '';
-    if (player && player.getVideoData) {
-        try {
-            const data = player.getVideoData();
-            if (data && data.video_id) {
-                videoId = data.video_id;
-            }
-        } catch (e) {
-            console.error("Error getting video ID from player:", e);
-        }
-    }
-    return { 
-      videoId: videoId,
-      playlist: localPlaylist
-    };
-  }
-
   function playVideo(index) {
-    if (localPlaylist.length === 0) {
+    if (globalState.playlist.length === 0) {
       showMessage("재생목록이 비어있습니다. 먼저 곡을 추가해주세요.", 'info');
       return;
     }
 
-    if (index >= localPlaylist.length) {
+    if (index >= globalState.playlist.length) {
       index = 0;
     } else if (index < 0) {
-      index = localPlaylist.length - 1;
+      index = globalState.playlist.length - 1;
     }
 
-    const nextSong = localPlaylist[index];
+    const nextSong = globalState.playlist[index];
     if (nextSong) {
       try {
         if (player) {
           player.loadVideoById(nextSong.videoId, 0);
           player.playVideo();
-          currentPlayingIndex = index;
+          globalState.currentPlayingIndex = index;
         }
       } catch (e) {
         console.error("Error playing video:", e);
@@ -420,35 +473,64 @@
     }
   }
   
-  // 무작위로 영상을 재생하는 함수
   function playRandomVideo() {
-    if (localPlaylist.length === 0) {
+    if (globalState.playlist.length === 0) {
         return;
     }
-    let randomIndex = Math.floor(Math.random() * localPlaylist.length);
+    let randomIndex = Math.floor(Math.random() * globalState.playlist.length);
     playVideo(randomIndex);
   }
 
   function playNext() {
-    if (localPlaylist.length === 0) {
+    if (globalState.playlist.length === 0) {
       return;
     }
     
-    let nextIndex = (currentPlayingIndex + 1) % localPlaylist.length;
+    let nextIndex = (globalState.currentPlayingIndex + 1) % globalState.playlist.length;
     playVideo(nextIndex);
   }
 
   function playPrev() {
-    if (localPlaylist.length === 0) {
+    if (globalState.playlist.length === 0) {
       return;
     }
     
-    let prevIndex = (currentPlayingIndex - 1 + localPlaylist.length) % localPlaylist.length;
+    let prevIndex = (globalState.currentPlayingIndex - 1 + globalState.playlist.length) % globalState.playlist.length;
     playVideo(prevIndex);
   }
 
   function wireUI() {
     addBtn.addEventListener('click', async () => {
+      if (isManuallyAdding) {
+        const url = (urlInput.value || '').trim();
+        const videoId = getVideoId(url);
+        const title = manualTitleInput.value.trim();
+        const artist = manualArtistInput.value.trim();
+
+        if (!videoId) {
+            showMessage("유효한 유튜브 링크 또는 ID를 입력해주세요.", 'error');
+            return;
+        }
+        if (!title || !artist) {
+            showMessage("제목과 아티스트를 모두 입력해주세요.", 'error');
+            return;
+        }
+        
+        const newPlaylist = [...globalState.playlist, {
+          title: title,
+          artist: artist,
+          videoId: videoId
+        }];
+        updatePlaylist(newPlaylist);
+        urlInput.value = '';
+        manualTitleInput.value = '';
+        manualArtistInput.value = '';
+        isManuallyAdding = false;
+        manualInputDiv.style.display = 'none';
+        addBtn.textContent = '추가';
+        return;
+      }
+      
       const url = (urlInput.value || '').trim();
       const videoId = getVideoId(url);
       if (!videoId) {
@@ -460,20 +542,31 @@
 
       try {
         const videoDetails = await fetchVideoDetails(videoId);
-        localPlaylist.push({
+        const newPlaylist = [...globalState.playlist, {
           title: videoDetails.title,
-          artist: videoDetails.channelTitle,
+          // 수정: fetchVideoDetails에서 반환된 'artist' 필드를 사용
+          artist: videoDetails.artist,
           videoId: videoId
-        });
-        renderList();
-        
-        debouncedSave(currentState());
+        }];
+        updatePlaylist(newPlaylist);
         urlInput.value = '';
+        manualInputDiv.style.display = 'none';
+        isManuallyAdding = false;
       } catch (e) {
-        showMessage("동영상 정보를 가져오는 데 실패했습니다: " + e.message, 'error');
+        console.error("동영상 정보를 가져오는 데 실패했습니다: " + e.message, e);
+        if (e.message.includes('403')) {
+            showMessage("API 키 사용량 초과 또는 유효하지 않은 키입니다. 수동으로 제목과 아티스트를 입력해주세요.", 'error');
+            isManuallyAdding = true;
+            manualInputDiv.style.display = 'block';
+            addBtn.textContent = '수동 추가';
+        } else {
+            showMessage("동영상 정보를 가져오는 데 실패했습니다: " + e.message, 'error');
+        }
       } finally {
-        addBtn.textContent = '추가';
         addBtn.disabled = false;
+        if (!isManuallyAdding) {
+            addBtn.textContent = '추가';
+        }
       }
     });
 
@@ -483,7 +576,7 @@
         if (player.isMuted()) {
           player.unMute();
         }
-        lastVolume = volumeSlider.value;
+        globalState.lastVolume = volumeSlider.value;
       }
     });
 
@@ -491,32 +584,33 @@
       if (playerReady) {
         if (player.isMuted()) {
           player.unMute();
-          player.setVolume(lastVolume);
-          volumeSlider.value = lastVolume;
+          player.setVolume(globalState.lastVolume);
+          volumeSlider.value = globalState.lastVolume;
         } else {
-          lastVolume = player.getVolume();
+          globalState.lastVolume = player.getVolume();
           player.mute();
           volumeSlider.value = 0;
         }
       }
     });
 
-    // 중앙 네모 오버레이 클릭 시 재생
+    // Central overlay click handler
     videoOverlayHole.addEventListener('click', () => {
-        if (localPlaylist.length > 0) {
-            playVideo(0);
+        if (globalState.playlist.length > 0) {
+            playRandomVideo();
+            hideOverlay();
         } else {
             showMessage("재생목록이 비어있습니다. 먼저 곡을 추가해주세요.", 'info');
         }
     });
     
-    // '사' 클릭: 이전 곡
+    // Previous song click handler
     prevSongTrigger.addEventListener('click', () => {
         playPrev();
         showMessage("이전 곡으로 넘어갑니다.");
     });
 
-    // '어' 클릭: 다음 곡
+    // Next song click handler
     nextSongTrigger.addEventListener('click', () => {
         playNext();
         showMessage("다음 곡으로 넘어갑니다.");
