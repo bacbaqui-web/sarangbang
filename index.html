@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>유튜브 셔플 플레이어</title>
+  <title>사랑방 띵곡 플레이어</title>
   <style>
     body { font-family: system-ui, -apple-apple-system, Segoe UI, Roboto, sans-serif; background: #111; color: #eee; margin: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
     .wrap { max-width: 900px; margin: 24px auto; padding: 0 16px; width: 100%; }
@@ -23,7 +23,10 @@
     .item .delete-btn:hover { opacity: 1; }
     .video-player { aspect-ratio: 16 / 9; width: 100%; max-width: 800px; margin: 8px auto; border-radius: 8px; overflow: hidden; position: relative; }
     .video-player:after { content: ''; position: absolute; top: 0; left: 0; right: 0; bottom: 0; cursor: not-allowed; }
-    h1 { text-align: center; }
+    .main-title { text-align: center; }
+    .sub-title { text-align: center; font-size: 0.9em; margin-top: -15px; color: #a0aec0; }
+    .special-char { cursor: pointer; color: #63b3ed; transition: color 0.2s; }
+    .special-char:hover { color: #4299e1; }
     .message-box { display: none; background: #2d3748; color: #fff; padding: 12px; border-radius: 8px; text-align: center; position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000; }
     .volume-controls { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
     .volume-controls .btn { padding: 0.5rem; display: flex; align-items: center; justify-content: center; }
@@ -40,7 +43,10 @@
 <body>
 <div id="message-box" class="message-box"></div>
 <div class="wrap">
-  <h1>유튜브 셔플 플레이어</h1>
+  <div class="main-title">
+    <h1 id="title-text">사<span id="next-song-trigger">랑</span>방 띵곡 플레이어</h1>
+    <p class="sub-title">작가님들의 띵곡을 추천해주세요</p>
+  </div>
   
   <div class="card">
     <div class="video-player">
@@ -92,6 +98,7 @@
   const volumeSlider = document.getElementById('volumeSlider');
   const volumeBtn = document.getElementById('volumeBtn');
   const loadingMessage = document.getElementById('loading-message');
+  const nextSongTrigger = document.getElementById('next-song-trigger');
 
   // ----- 상태/가드 -----
   const appId = 'default-app-id';
@@ -188,7 +195,6 @@
             loadingMessage.style.display = 'none';
             break;
         case YT.PlayerState.PLAYING:
-            // CRITICAL FIX: Save state only when the video starts playing
             debouncedSave(currentState());
             loadingMessage.style.display = 'none';
             break;
@@ -209,7 +215,6 @@
   }
 
   async function saveState(state) {
-    // CRITICAL FIX: Add a check to ensure state is valid before saving
     if (!state || !state.videoId || !player) {
       console.error("State or videoId is undefined. Skipping save.");
       return;
@@ -243,7 +248,6 @@
       }
       const state = snap.data() || {};
       
-      // CRITICAL FIX: Prevent self-updates from causing a loop
       if (state.lastUpdatedBy === clientId) {
           return;
       }
@@ -279,7 +283,6 @@
       div.className = 'item';
       div.innerHTML = `<span>${item.artist} - ${item.title}</span><button class="delete-btn" data-index="${index}">&#x2715;</button>`;
       
-      // 삭제 버튼 이벤트 리스너 추가
       div.querySelector('.delete-btn').addEventListener('click', (e) => {
         const index = parseInt(e.target.dataset.index, 10);
         localPlaylist.splice(index, 1);
@@ -426,6 +429,12 @@
             muteIcon.style.display = 'none';
         }
     }
+
+    // '사' 클릭 시 다음 곡 재생 기능 추가
+    nextSongTrigger.addEventListener('click', () => {
+        playNext();
+        showMessage("다음 곡으로 넘어갑니다.");
+    });
   }
 
   // ----- 시작 -----
