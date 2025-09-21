@@ -2,51 +2,318 @@
 <html lang="ko">
 <head>
   <meta charset="UTF-8">
-  <title>Firebase 연결 테스트</title>
-  <script src="https://www.gstatic.com/firebasejs/9.6.11/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.6.11/firebase-analytics-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.6.11/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.6.11/firebase-firestore-compat.js"></script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>유튜브 셔플 플레이어</title>
+  <style>
+    body { font-family: system-ui, -apple-apple-system, Segoe UI, Roboto, sans-serif; background: #111; color: #eee; margin: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh; }
+    .wrap { max-width: 900px; margin: 24px auto; padding: 0 16px; width: 100%; }
+    .card { border: 1px solid #444; border-radius: 10px; padding: 16px; margin: 12px 0; background: #222; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .btn { background: #48bb78; color: #fff; border: 0; border-radius: 999px; padding: .6rem 1rem; cursor: pointer; transition: background 0.2s; }
+    .btn:hover { background: #38a169; }
+    .btn.sec { background: #4a5568; }
+    .btn.sec:hover { background: #2d3748; }
+    .ok { color: #68d391; }
+    .fail { color: #fc8181; }
+    .muted { color: #a0aec0; }
+    input { background: #1f2937; color: #eee; border: 1px solid #374151; border-radius: 8px; padding: .55rem .7rem; flex: 1; min-width: 220px; outline: none; transition: border-color 0.2s; }
+    input:focus { border-color: #48bb78; }
+    .item { display: flex; justify-content: space-between; align-items: center; padding: .5rem .6rem; border-bottom: 1px solid #2f3743; cursor: pointer; }
+    .item:hover { background: #2a3340; }
+    .item:last-child { border-bottom: none; }
+    .item .delete-btn { background: none; border: none; color: #fc8181; cursor: pointer; font-size: 1.2em; line-height: 1; margin-left: 10px; opacity: 0.7; transition: opacity 0.2s; }
+    .item .delete-btn:hover { opacity: 1; }
+    .video-player { aspect-ratio: 16 / 9; width: 100%; max-width: 800px; margin: 8px auto; border-radius: 8px; overflow: hidden; }
+    h1 { text-align: center; }
+  </style>
+  <!-- Firebase SDK -->
+  <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore-compat.js"></script>
+  <!-- YouTube iFrame Player API -->
+  <script src="https://www.youtube.com/iframe_api"></script>
 </head>
 <body>
-  <h1>Firebase 연결 테스트</h1>
-  <pre id="status">초기화 중...</pre>
+<div class="wrap">
+  <h1>유튜브 셔플 플레이어</h1>
+  
+  <div class="card" id="diag">준비중…</div>
+  
+  <div class="card">
+    <div class="row" style="justify-content:space-between">
+      <div>사용자 ID: <span id="uid" class="muted">-</span></div>
+      <div id="conn" class="muted">오프라인</div>
+    </div>
+    
+    <div class="video-player">
+      <div id="player"></div>
+    </div>
+    
+    <div class="row" style="margin-top:10px">
+      <input id="url" placeholder="유튜브 링크 또는 ID를 붙여넣기"/>
+      <button id="add" class="btn">추가</button>
+      <button id="shuffle" class="btn sec">셔플 재생</button>
+      <button id="sync" class="btn sec">동기화</button>
+    </div>
+    
+    <div id="playlist" class="card" style="margin:10px 0 0 0">
+      <div class="muted">재생목록이 비어있습니다.</div>
+    </div>
+  </div>
+</div>
 
-  <script>
-    // 사용자가 제공한 apiKey 그대로 넣은 firebaseConfig
-    const firebaseConfig = {
-      apiKey: "AIzaSyDz6xGJNKXinG5rREjdrPz7toIYGZXzilU",
-      authDomain: "sarangbangmusicplaylist.firebaseapp.com",
-      projectId: "sarangbangmusicplaylist",
-      storageBucket: "sarangbangmusicplaylist.appspot.com",
-      messagingSenderId: "193412502606",
-      appId: "1:193412502606:web:0f7f9ddbef1ee6711d1ff",
-      measurementId: "G-L14GH3BHYD"
-    };
+<script>
+  // Firebase 웹앱 스니펫 (Firebase 콘솔에서 가져온 설정)
+  // 이 값은 Firebase 프로젝트 설정에 따라 달라집니다.
+  const firebaseConfig = {
+    apiKey: "AIzaSyDz6xGJNKXinG5rREjdrPz7toIYGZXzilU",
+    authDomain: "sarangbangmusicplaylist.firebaseapp.com",
+    projectId: "sarangbangmusicplaylist",
+    storageBucket: "sarangbangmusicplaylist.appspot.com",
+    messagingSenderId: "193412502606",
+    appId: "1:193412502606:web:0f7f9ddbef1ee6711d1ff",
+    measurementId: "G-L14GH3BHYD"
+  };
 
-    // Firebase 초기화
-    firebase.initializeApp(firebaseConfig);
-    firebase.analytics();
+  // ----- 요소 -----
+  const diag = document.getElementById('diag');
+  const uidEl = document.getElementById('uid');
+  const connEl = document.getElementById('conn');
+  const urlInput = document.getElementById('url');
+  const addBtn = document.getElementById('add');
+  const shuffleBtn = document.getElementById('shuffle');
+  const syncBtn = document.getElementById('sync');
+  const listEl = document.getElementById('playlist');
 
-    const statusEl = document.getElementById('status');
+  // ----- 상태/가드 -----
+  const appId = 'default-app-id';
+  const clientId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Math.random());
+  let authed = false;
+  let saveTimer = null;
+  let suppress = false;
+  let localPlaylist = [];
+  let player;
+  let playerReady = false;
 
-    // 익명 로그인 시도
-    firebase.auth().signInAnonymously()
-      .then(() => {
-        statusEl.textContent = "✅ Firebase 초기화 + 익명 로그인 성공";
-        // Firestore 테스트
-        return firebase.firestore().collection("test").doc("ping").set({ time: Date.now() });
-      })
-      .then(() => {
-        statusEl.textContent += "\n✅ Firestore 쓰기 성공";
-        return firebase.firestore().collection("test").doc("ping").get();
-      })
-      .then(doc => {
-        statusEl.textContent += "\n✅ Firestore 읽기 성공: " + JSON.stringify(doc.data());
-      })
-      .catch(err => {
-        statusEl.textContent = "❌ 에러 발생: " + err.code + " / " + err.message;
+  function log(html) { diag.innerHTML += html; }
+  function setDiag(html) { diag.innerHTML = html; }
+
+  // ----- Firebase 초기화 + 익명 로그인 + 진단 -----
+  async function boot() {
+    try {
+      firebase.initializeApp(firebaseConfig);
+      setDiag("<p class='ok'>✔ Firebase 초기화 성공</p>");
+    } catch (e) {
+      setDiag("<p class='fail'>✘ 초기화 실패: " + e.message + "</p>");
+      return;
+    }
+
+    try {
+      await firebase.auth().signInAnonymously();
+      authed = true;
+      uidEl.textContent = firebase.auth().currentUser.uid;
+      connEl.textContent = '온라인';
+      log("<p class='ok'>✔ 익명 로그인 성공</p>");
+    } catch (e) {
+      log("<p class='fail'>✘ 인증 실패: " + e.message + "</p>");
+      if (String(e.message).includes('operation-not-allowed')) {
+        log("<p class='fail'>Authentication > 익명 로그인 활성화 필요</p>");
+      }
+      return;
+    }
+
+    // Firestore ping
+    const db = firebase.firestore();
+    try {
+      const pingRef = db.collection('artifacts').doc(appId).collection('public').doc('_ping');
+      await pingRef.set({ pong: true, by: clientId, at: new Date() }, { merge: true });
+      log("<p class='ok'>✔ Firestore 쓰기 성공</p>");
+    } catch (e) {
+      log("<p class='fail'>✘ Firestore 쓰기 실패: " + e.message + "</p>");
+    }
+
+    startRealtime();
+    wireUI();
+  }
+
+  // 유튜브 플레이어 API가 로드되면 호출되는 함수
+  function onYouTubeIframeAPIReady() {
+    playerReady = true;
+    player = new YT.Player('player', {
+      height: '100%',
+      width: '100%',
+      videoId: '',
+      events: {
+        'onStateChange': onPlayerStateChange
+      }
+    });
+  }
+
+  // 유튜브 플레이어 상태 변경 시 호출
+  function onPlayerStateChange(event) {
+    if (!suppress) {
+      debouncedSave(currentState());
+    }
+    // 비디오 재생이 끝났을 때
+    if (event.data === YT.PlayerState.ENDED) {
+      playRandom();
+    }
+  }
+
+  // ----- 저장/동기화 -----
+  function debouncedSave(state) {
+    if (!authed) return;
+    if (saveTimer) clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => saveState(state), 300); // 디바운스 시간 늘림
+  }
+
+  async function saveState(state) {
+    if (!state || !state.videoId) { // 추가된 유효성 검사
+      console.error("State or videoId is undefined. Skipping save.");
+      return;
+    }
+    try {
+      const db = firebase.firestore();
+      const ref = db.collection('artifacts').doc(appId).collection('public')
+        .doc('data').collection('playback_state').doc('main_state');
+      const safe = {
+        timestamp: player ? player.getCurrentTime() : 0,
+        videoId: state.videoId,
+        playlist: Array.isArray(state.playlist) ? state.playlist : [],
+        lastUpdatedBy: clientId,
+        updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+      };
+      await ref.set(safe, { merge: true });
+    } catch (e) {
+      log("<p class='fail'>✘ 상태 저장 실패: " + e.message + "</p>");
+    }
+  }
+
+  function startRealtime() {
+    const db = firebase.firestore();
+    const ref = db.collection('artifacts').doc(appId).collection('public')
+      .doc('data').collection('playback_state').doc('main_state');
+
+    ref.onSnapshot(async (snap) => {
+      if (!snap.exists) return;
+      const state = snap.data() || {};
+      if (state.lastUpdatedBy === clientId) return;
+
+      try {
+        suppress = true;
+
+        const remoteList = Array.isArray(state.playlist) ? state.playlist : [];
+        if (JSON.stringify(remoteList) !== JSON.stringify(localPlaylist)) {
+          localPlaylist = remoteList;
+          renderList();
+        }
+
+        if (playerReady && state.videoId && player.getVideoUrl() !== 'https://www.youtube.com/watch?v=' + state.videoId) {
+          player.loadVideoById(state.videoId);
+        }
+
+        const t = Number(state.timestamp) || 0;
+        if (player && Math.abs(player.getCurrentTime() - t) > 2) { // 시간 오차 허용 범위 늘림
+          player.seekTo(t, true);
+        }
+      } finally {
+        setTimeout(() => { suppress = false; }, 500);
+      }
+    }, (err) => { log("<p class='fail'>✘ 구독 오류: " + err.message + "</p>"); });
+  }
+
+  // ----- UI/플레이어 -----
+  function renderList() {
+    listEl.innerHTML = '';
+    if (!localPlaylist.length) {
+      listEl.innerHTML = '<div class="muted">재생목록이 비어있습니다.</div>';
+      return;
+    }
+    localPlaylist.forEach((item, index) => {
+      const div = document.createElement('div');
+      div.className = 'item';
+      div.innerHTML = `<span>${item.name}</span><button class="delete-btn" data-index="${index}">&#x2715;</button>`;
+      div.addEventListener('click', async (e) => {
+        if (e.target.classList.contains('delete-btn')) return;
+        try { 
+          if (player) {
+            player.loadVideoById(item.videoId, 0);
+            player.playVideo();
+          }
+        } catch {}
+        debouncedSave(currentState());
       });
-  </script>
+      listEl.appendChild(div);
+    });
+    // 삭제 버튼 이벤트 리스너 추가
+    listEl.querySelectorAll('.delete-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        const index = parseInt(e.target.dataset.index, 10);
+        localPlaylist.splice(index, 1);
+        renderList();
+        debouncedSave(currentState());
+      });
+    });
+  }
+
+  function getVideoId(url) {
+    const regex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i;
+    const match = url.match(regex);
+    return (match && match[1]) ? match[1] : null;
+  }
+
+  function currentState() {
+    return { 
+      videoId: player ? player.getVideoData().video_id : '',
+      playlist: localPlaylist
+    };
+  }
+
+  async function playRandom() {
+    if (!localPlaylist.length) return;
+    const idx = Math.floor(Math.random() * localPlaylist.length);
+    const song = localPlaylist[idx];
+    try {
+      if (player) {
+        player.loadVideoById(song.videoId, 0);
+        player.playVideo();
+      }
+    } catch {}
+    debouncedSave(currentState());
+  }
+
+  function wireUI() {
+    addBtn.addEventListener('click', () => {
+      const url = (urlInput.value || '').trim();
+      const videoId = getVideoId(url);
+      if (!videoId) {
+        alert("유효한 유튜브 링크 또는 ID를 입력해주세요.");
+        return;
+      }
+      const db = firebase.firestore();
+      db.collection('artifacts').doc(appId).collection('public').doc('data').collection('video_info').doc(videoId).get().then(docSnap => {
+        let title = '제목을 찾을 수 없습니다';
+        if (docSnap.exists) {
+          title = docSnap.data().title;
+        } else {
+          // 비디오 제목을 가져오는 로직 (유튜브 API 필요) - 여기서는 간단하게 ID를 제목으로 사용
+          title = `Video ID: ${videoId}`;
+        }
+        localPlaylist.push({ name: title, videoId: videoId });
+        renderList();
+        debouncedSave(currentState());
+        urlInput.value = '';
+      });
+    });
+
+    shuffleBtn.addEventListener('click', () => { playRandom(); });
+    syncBtn.addEventListener('click', () => { debouncedSave(currentState()); });
+  }
+
+  // ----- 시작 -----
+  window.onload = function() {
+    boot();
+  };
+</script>
 </body>
 </html>
