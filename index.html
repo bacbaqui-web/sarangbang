@@ -16,7 +16,6 @@
     .item{display:flex;justify-content:space-between;align-items:center;padding:.5rem .6rem;border-bottom:1px solid #2f3743;cursor:pointer}
     .item:hover{background:#2a3340}
   </style>
-  <!-- compat SDK: window.firebase 제공 -->
   <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore-compat.js"></script>
@@ -24,7 +23,6 @@
 <body>
 <div class="wrap">
   <h1>음악 셔플 플레이어</h1>
-
   <div class="card" id="diag">준비중…</div>
 
   <div class="card">
@@ -38,8 +36,8 @@
     <div class="row" style="margin-top:10px">
       <input id="url" placeholder="오디오 URL(mp3 등) 붙여넣기"/>
       <button id="add" class="btn">추가</button>
-      <button id="shuffle" class="btn sec">셔플 재생</button>
-      <button id="sync" class="btn sec">동기화</button>
+      <button id="shuffle" class="btn.sec">셔플 재생</button>
+      <button id="sync" class="btn.sec">동기화</button>
     </div>
 
     <div id="playlist" class="card" style="margin:10px 0 0 0">
@@ -49,18 +47,17 @@
 </div>
 
 <script>
-  // Firebase 웹앱 스니펫(새 프로젝트: sarangbangmusicplaylist)
+  // Firebase 구성 (프로젝트: sarangbangmusicplaylist)
   const firebaseConfig = {
-  "apiKey": "AIzaSyDz6xGJNXKinG5rREjdPz7toIYGZXziIU",
-  "authDomain": "sarangbangmusicplaylist.firebaseapp.com",
-  "projectId": "sarangbangmusicplaylist",
-  "storageBucket": "sarangbangmusicplaylist.appspot.com",
-  "messagingSenderId": "193412502606",
-  "appId": "1:193412502606:web:0f7f9ddbef1ee6711d1ff",
-  "measurementId": "G-L14GH3BHYD"
-};
+    apiKey: "AIzaSyDz6xGJNXKinG5rREjdPz7toIYGZXziIU",
+    authDomain: "sarangbangmusicplaylist.firebaseapp.com",
+    projectId: "sarangbangmusicplaylist",
+    storageBucket: "sarangbangmusicplaylist.appspot.com",
+    messagingSenderId: "193412502606",
+    appId: "1:193412502606:web:0f7f9ddbef1ee6711d1ff",
+    measurementId: "G-L14GH3BHYD"
+  };
 
-  // ----- 요소 -----
   const diag = document.getElementById('diag');
   const uidEl = document.getElementById('uid');
   const connEl = document.getElementById('conn');
@@ -71,127 +68,81 @@
   const syncBtn = document.getElementById('sync');
   const listEl = document.getElementById('playlist');
 
-  // ----- 상태/가드 -----
   const appId = 'default-app-id';
   const clientId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Math.random());
-  let authed = false;
-  let saveTimer = null;
-  let suppress = false;
-  let endedHooked = false;
+  let authed = false, saveTimer = null, suppress = false, endedHooked = false;
   let localPlaylist = [];
 
-  function log(html){ diag.innerHTML += html; }
-  function setDiag(html){ diag.innerHTML = html; }
+  function log(h){ diag.innerHTML += h; }
+  function setDiag(h){ diag.innerHTML = h; }
 
-  // ----- Firebase 초기화 + 익명 로그인 + 진단 -----
   async function boot() {
-    try {
-      firebase.initializeApp(firebaseConfig);
-      setDiag("<p class='ok'>✔ Firebase 초기화 성공</p>");
-    } catch (e) {
-      setDiag("<p class='fail'>✘ 초기화 실패: "+e.message+"</p>");
-      return;
-    }
+    try { firebase.initializeApp(firebaseConfig); setDiag("<p class='ok'>✔ Firebase 초기화 성공</p>"); }
+    catch(e){ setDiag("<p class='fail'>✘ 초기화 실패: "+e.message+"</p>"); return; }
 
     try {
       await firebase.auth().signInAnonymously();
-      authed = true;
-      uidEl.textContent = firebase.auth().currentUser.uid;
-      connEl.textContent = '온라인';
+      authed = true; uidEl.textContent = firebase.auth().currentUser.uid; connEl.textContent = '온라인';
       log("<p class='ok'>✔ 익명 로그인 성공</p>");
     } catch (e) {
       log("<p class='fail'>✘ 인증 실패: "+e.message+"</p>");
-      if (String(e.message).includes('operation-not-allowed')) {
-        log("<p class='fail'>Authentication > 익명 로그인 활성화 필요</p>");
-      }
+      if (String(e.message).includes('operation-not-allowed')) log("<p class='fail'>Authentication > 익명 로그인 활성화 필요</p>");
       return;
     }
 
-    // Firestore ping
     const db = firebase.firestore();
     try {
-      const pingRef = db.collection('artifacts').doc(appId).collection('public').doc('_ping');
-      await pingRef.set({ pong:true, by:clientId, at:new Date() }, { merge:true });
+      const ping = db.collection('artifacts').doc(appId).collection('public').doc('_ping');
+      await ping.set({ pong:true, by:clientId, at:new Date() }, { merge:true });
       log("<p class='ok'>✔ Firestore 쓰기 성공</p>");
-    } catch (e) {
-      log("<p class='fail'>✘ Firestore 쓰기 실패: "+e.message+"</p>");
-    }
+    } catch (e) { log("<p class='fail'>✘ Firestore 쓰기 실패: "+e.message+"</p>"); }
 
-    startRealtime();
-    wireUI();
+    startRealtime(); wireUI();
   }
 
-  // ----- 저장/동기화 -----
-  function debouncedSave(state){
-    if (!authed) return;
-    if (saveTimer) clearTimeout(saveTimer);
-    saveTimer = setTimeout(()=>saveState(state), 150);
-  }
-
+  function debouncedSave(state){ if (!authed) return; if (saveTimer) clearTimeout(saveTimer); saveTimer=setTimeout(()=>saveState(state),150); }
   async function saveState(state){
     try {
       const db = firebase.firestore();
-      const ref = db.collection('artifacts').doc(appId).collection('public')
-                    .doc('data').collection('playback_state').doc('main_state');
+      const ref = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('playback_state').doc('main_state');
       const safe = {
         timestamp: Number(state.timestamp)||0,
         url: String(state.url||''),
-        playlist: Array.isArray(state.playlist) ? state.playlist.map(x=>({name:String(x.name||''), url:String(x.url||'')})) : [],
+        playlist: Array.isArray(state.playlist)? state.playlist.map(x=>({name:String(x.name||''), url:String(x.url||'')})) : [],
         lastUpdatedBy: clientId,
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
       };
       await ref.set(safe, { merge:true });
-    } catch (e) {
-      log("<p class='fail'>✘ 상태 저장 실패: "+e.message+"</p>");
-    }
+    } catch(e){ log("<p class='fail'>✘ 상태 저장 실패: "+e.message+"</p>"); }
   }
 
   function startRealtime(){
     const db = firebase.firestore();
-    const ref = db.collection('artifacts').doc(appId).collection('public')
-                  .doc('data').collection('playback_state').doc('main_state');
-
-    if (!endedHooked) { audio.addEventListener('ended', playRandom); endedHooked = true; }
-
-    ref.onSnapshot(async (snap)=>{
+    const ref = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('playback_state').doc('main_state');
+    if (!endedHooked){ audio.addEventListener('ended', playRandom); endedHooked = true; }
+    ref.onSnapshot(snap=>{
       if (!snap.exists) return;
-      const state = snap.data() || {};
+      const state = snap.data()||{};
       if (state.lastUpdatedBy === clientId) return;
-
-      try {
+      try{
         suppress = true;
-
-        const remoteList = Array.isArray(state.playlist) ? state.playlist : [];
-        if (JSON.stringify(remoteList) !== JSON.stringify(localPlaylist)) {
-          localPlaylist = remoteList;
-          renderList();
-        }
-
-        if (state.url && audio.src !== state.url) audio.src = state.url;
-
-        const t = Number(state.timestamp)||0;
-        if (Math.abs(audio.currentTime - t) > 1) audio.currentTime = t;
-
-      } finally {
-        setTimeout(()=>{ suppress = false; }, 100);
-      }
-    }, (err)=>{ log("<p class='fail'>✘ 구독 오류: "+err.message+"</p>"); });
+        const list = Array.isArray(state.playlist)? state.playlist : [];
+        if (JSON.stringify(list)!==JSON.stringify(localPlaylist)){ localPlaylist = list; renderList(); }
+        if (state.url && audio.src!==state.url) audio.src = state.url;
+        const t = Number(state.timestamp)||0; if (Math.abs(audio.currentTime - t) > 1) audio.currentTime = t;
+      } finally { setTimeout(()=>{ suppress=false; },100); }
+    }, err=>{ log("<p class='fail'>✘ 구독 오류: "+err.message+"</p>"); });
   }
 
-  // ----- UI/플레이어 -----
   function renderList(){
-    listEl.innerHTML = '';
-    if (!localPlaylist.length){
-      listEl.innerHTML = '<div class="muted">재생목록이 비어있습니다.</div>';
-      return;
-    }
+    listEl.innerHTML='';
+    if (!localPlaylist.length){ listEl.innerHTML='<div class="muted">재생목록이 비어있습니다.</div>'; return; }
     localPlaylist.forEach(item=>{
-      const div = document.createElement('div');
-      div.className = 'item';
-      div.innerHTML = `<span>${item.name}</span><span class="muted" style="font-size:.85rem">재생</span>`;
+      const div=document.createElement('div'); div.className='item';
+      div.innerHTML=`<span>${item.name}</span><span class="muted" style="font-size:.85rem">재생</span>`;
       div.addEventListener('click', async ()=>{
-        try { suppress = true; if (audio.src !== item.url) audio.src = item.url; audio.currentTime = 0; await audio.play(); }
-        catch{} finally { suppress = false; }
+        try{ suppress=true; if (audio.src!==item.url) audio.src=item.url; audio.currentTime=0; await audio.play(); }
+        catch{} finally { suppress=false; }
         debouncedSave(currentState());
       });
       listEl.appendChild(div);
@@ -199,34 +150,25 @@
   }
 
   function currentState(){ return { timestamp: audio.currentTime, url: audio.src, playlist: localPlaylist }; }
-
   async function playRandom(){
     if (!localPlaylist.length) return;
-    const idx = Math.floor(Math.random() * localPlaylist.length);
-    const song = localPlaylist[idx];
-    try { suppress = true; if (audio.src !== song.url) audio.src = song.url; audio.currentTime = 0; await audio.play(); }
-    catch{} finally { suppress = false; }
-    debouncedSave({ ...currentState(), url: song.url });
+    const i=Math.floor(Math.random()*localPlaylist.length), song=localPlaylist[i];
+    try{ suppress=true; if (audio.src!==song.url) audio.src=song.url; audio.currentTime=0; await audio.play(); }
+    catch{} finally { suppress=false; }
+    debouncedSave({ ...currentState(), url:song.url });
   }
 
   function wireUI(){
     addBtn.addEventListener('click', ()=>{
-      const url = (urlInput.value||'').trim();
-      if (!url) return;
-      const name = url.split('/').pop() || 'Unknown Track';
-      localPlaylist.push({ name, url });
-      renderList();
-      debouncedSave(currentState());
-      urlInput.value = '';
+      const url=(urlInput.value||'').trim(); if(!url) return;
+      const name=url.split('/').pop()||'Unknown Track';
+      localPlaylist.push({name,url}); renderList(); debouncedSave(currentState()); urlInput.value='';
     });
-
     shuffleBtn.addEventListener('click', ()=>{ playRandom(); });
     syncBtn.addEventListener('click', ()=>{ debouncedSave(currentState()); });
-
-    audio.addEventListener('seeked', ()=>{ if (!suppress) debouncedSave(currentState()); });
+    audio.addEventListener('seeked', ()=>{ if(!suppress) debouncedSave(currentState()); });
   }
 
-  // ----- 시작 -----
   boot();
 </script>
 </body>
