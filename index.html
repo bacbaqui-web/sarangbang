@@ -30,25 +30,33 @@
     
     #player { pointer-events: auto; }
 
-    /* 유튜브 전체를 덮는 투명한 오버레이 */
+    /* 컨테이너는 이벤트 통과, 블록이 클릭을 막음 */
     .video-overlay-unclickable {
       position: absolute;
       top: 0;
       left: 0;
       width: 100%;
       height: 100%;
-      background: rgba(0, 0, 0, 0.1); /* 투명도를 낮춰서 투명하게 만듦 */
-      pointer-events: auto; /* 이 부분이 중요합니다. 이제 클릭을 막습니다. */
+      pointer-events: none; /* 핵심: 컨테이너는 클릭을 막지 않음 */
       opacity: 1;
       transition: opacity 0.3s ease-in-out;
       z-index: 10;
     }
+    
     .video-overlay-unclickable.hidden {
       opacity: 0;
       pointer-events: none;
     }
     
-    /* 중앙에 뚫린 네모 영역 */
+    /* 구멍을 제외한 4개 블록 */
+    .video-block {
+      position: absolute;
+      background: rgba(0,0,0,0.1); /* 투명도를 낮춰서 투명하게 만듦 */
+      pointer-events: auto; /* 핵심: 이 블록들이 클릭을 막습니다. */
+      z-index: 10;
+    }
+    
+    /* 가운대 네모(구멍)는 클릭 통과 */
     .video-overlay-hole {
       position: absolute;
       top: 50%;
@@ -56,10 +64,11 @@
       transform: translate(-50%, -50%);
       width: 100px; /* 네모 크기 조절 */
       height: 100px;
-      pointer-events: auto; /* 이 영역만 클릭 활성화 */
+      pointer-events: none; /* 핵심: 클릭이 통과합니다. */
       cursor: pointer;
-      z-index: 11; /* unclickable 오버레이보다 위로 */
+      z-index: 11;
       border-radius: 10px;
+      box-sizing: border-box;
     }
     
     .video-overlay-hole.hidden {
@@ -87,7 +96,12 @@
     <div class="video-player">
       <div id="player"></div>
       <!-- 오버레이 추가 -->
-      <div id="video-overlay-unclickable" class="video-overlay-unclickable"></div>
+      <div id="video-overlay-unclickable" class="video-overlay-unclickable">
+        <div id="blk-top" class="video-block"></div>
+        <div id="blk-left" class="video-block"></div>
+        <div id="blk-right" class="video-block"></div>
+        <div id="blk-bottom" class="video-block"></div>
+      </div>
       <div id="video-overlay-hole" class="video-overlay-hole"></div>
     </div>
     
@@ -192,6 +206,34 @@
     videoOverlayUnclickable.classList.add('hidden');
     videoOverlayHole.classList.add('hidden');
   }
+  
+  // 오버레이 구멍 영역을 동적으로 배치하는 함수
+  function layoutOverlayHole() {
+    const wrap = document.querySelector('.video-player');
+    const overlay = document.getElementById('video-overlay-unclickable');
+    const hole = document.getElementById('video-overlay-hole');
+
+    const rWrap = wrap.getBoundingClientRect();
+    const rHole = hole.getBoundingClientRect();
+
+    // 4개의 블록을 가져옴
+    const top = document.getElementById('blk-top');
+    const left = document.getElementById('blk-left');
+    const right = document.getElementById('blk-right');
+    const bottom = document.getElementById('blk-bottom');
+
+    // hole 좌표를 wrap 기준으로 변환
+    const x1 = rHole.left - rWrap.left;
+    const y1 = rHole.top - rWrap.top;
+    const x2 = x1 + rHole.width;
+    const y2 = y1 + rHole.height;
+    
+    // CSS 변형 대신 스타일을 직접 설정하여 배치
+    top.style.cssText = `left:0; top:0; width:100%; height:${y1}px;`;
+    bottom.style.cssText = `left:0; top:${y2}px; width:100%; height:${rWrap.height - y2}px;`;
+    left.style.cssText = `left:0; top:${y1}px; width:${x1}px; height:${rHole.height}px;`;
+    right.style.cssText = `left:${x2}px; top:${y1}px; width:${rWrap.width - x2}px; height:${rHole.height}px;`;
+  }
 
   // ----- Firebase initialization + anonymous login + diagnostics -----
   async function boot() {
@@ -225,7 +267,7 @@
     startRealtime();
     wireUI();
   }
-
+  
   // Called when the YouTube iFrame Player API is loaded
   function onYouTubeIframeAPIReady() {
     playerReady = true;
@@ -253,7 +295,10 @@
   // Called when the YouTube player is ready
   function onPlayerReady(event) {
     console.log('YouTube Player is ready.');
+    // 플레이어가 로드된 후 오버레이를 한 번 더 배치
+    layoutOverlayHole();
     if (globalState.playlist.length > 0) {
+        // 플레이어가 준비되면 오버레이를 항상 표시합니다.
         showOverlay();
     }
   }
@@ -264,7 +309,6 @@
     switch (event.data) {
         case YT.PlayerState.ENDED:
             playRandomVideo();
-            showOverlay();
             break;
         case YT.PlayerState.PLAYING:
             // 동영상 ID가 로드된 후에만 상태를 업데이트하고 저장합니다.
@@ -274,13 +318,10 @@
                 globalState.timestamp = player.getCurrentTime();
                 savePlaybackState();
             }
-            // 수정: 재생 중일 때도 오버레이를 유지하도록 이 줄을 제거함
-            // hideOverlay(); 
             break;
         case YT.PlayerState.PAUSED:
             globalState.timestamp = player.getCurrentTime();
             savePlaybackState();
-            showOverlay();
             break;
     }
   }
@@ -388,7 +429,8 @@
     listEl.innerHTML = '';
     if (!globalState.playlist.length) {
       listEl.innerHTML = '<div class="muted">재생목록이 비어있습니다.</div>';
-      showOverlay();
+      // 재생목록이 비었을 때 오버레이를 항상 표시합니다.
+      showOverlay(); 
       return;
     }
     
@@ -410,10 +452,9 @@
     
     if (globalState.playlist.length > 0 && (!player || !player.getVideoData())) {
         playRandomVideo();
-        hideOverlay();
-    } else {
-        showOverlay();
     }
+    // 재생목록에 곡이 있을 때 오버레이를 항상 표시합니다.
+    showOverlay();
   }
 
   // 수정: 순수 ID와 URL을 모두 처리하도록 로직 변경
@@ -595,16 +636,6 @@
         }
       }
     });
-
-    // Central overlay click handler
-    videoOverlayHole.addEventListener('click', () => {
-        if (globalState.playlist.length > 0) {
-            playRandomVideo();
-            hideOverlay();
-        } else {
-            showMessage("재생목록이 비어있습니다. 먼저 곡을 추가해주세요.", 'info');
-        }
-    });
     
     // Previous song click handler
     prevSongTrigger.addEventListener('click', () => {
@@ -622,6 +653,9 @@
   // ----- Start up -----
   window.onload = function() {
     boot();
+    // 초기 로드 시 및 창 크기 변경 시 오버레이 배치
+    layoutOverlayHole();
+    window.addEventListener('resize', layoutOverlayHole);
   };
 </script>
 </body>
