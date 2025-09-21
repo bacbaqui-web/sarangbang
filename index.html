@@ -28,7 +28,6 @@
     .message-box { display: none; background: #2d3748; color: #fff; padding: 12px; border-radius: 8px; text-align: center; position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000; }
     .volume-controls { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
     .volume-controls .btn { padding: 0.5rem 1rem; }
-    .loading-message { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); background: rgba(0,0,0,0.7); color: white; padding: 10px 20px; border-radius: 5px; z-index: 10; }
   </style>
   <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
@@ -41,14 +40,15 @@
 <div id="message-box" class="message-box"></div>
 <div class="wrap">
   <div class="main-title">
-    <h1 id="title-text">사<span id="next-song-trigger">랑</span>방 띵곡 플레이어</h1>
+    <h1 id="title-text">
+      <span id="prev-song-trigger">사</span>랑방 <span id="play-song-trigger">띵</span>곡 플레<span id="next-song-trigger">어</span>
+    </h1>
     <p class="sub-title">작가님들의 띵곡을 추천해주세요</p>
   </div>
   
   <div class="card">
     <div class="video-player">
       <div id="player"></div>
-      <div id="loading-message" class="loading-message" style="display: none;">동영상 로딩 중...</div>
     </div>
     
     <div class="row" style="margin-top:10px">
@@ -89,7 +89,10 @@
   const messageBox = document.getElementById('message-box');
   const volumeSlider = document.getElementById('volumeSlider');
   const volumeBtn = document.getElementById('volumeBtn');
-  const loadingMessage = document.getElementById('loading-message');
+  
+  // '사', '띵', '어' 글자에 해당하는 요소들을 ID로 지정
+  const prevSongTrigger = document.getElementById('prev-song-trigger');
+  const playSongTrigger = document.getElementById('play-song-trigger');
   const nextSongTrigger = document.getElementById('next-song-trigger');
 
   // ----- state/guards -----
@@ -100,8 +103,9 @@
   let localPlaylist = [];
   let player;
   let playerReady = false;
-  let currentVideoId = ''; 
+  let initialSyncDone = false;
   let lastVolume = 100;
+  let currentPlayingIndex = -1;
 
   function showMessage(message, type = 'info') {
     messageBox.textContent = message;
@@ -176,7 +180,10 @@
   // Called when the YouTube player is ready
   function onPlayerReady(event) {
     console.log('YouTube Player is ready.');
-    playNext();
+    if (initialSyncDone && localPlaylist.length > 0) {
+        // Player is ready, and we already have a playlist from Firestore. Play the first song.
+        playVideo(0);
+    }
   }
 
   // Called when the YouTube player state changes
@@ -184,17 +191,13 @@
     switch (event.data) {
         case YT.PlayerState.ENDED:
             playNext();
-            loadingMessage.style.display = 'none';
             break;
         case YT.PlayerState.PLAYING:
             debouncedSave(currentState());
-            loadingMessage.style.display = 'none';
             break;
         case YT.PlayerState.PAUSED:
-            loadingMessage.style.display = 'none';
             break;
         case YT.PlayerState.BUFFERING:
-            loadingMessage.style.display = 'block';
             break;
     }
   }
@@ -215,8 +218,10 @@
       const db = firebase.firestore();
       const ref = db.collection('artifacts').doc(appId).collection('public')
         .doc('data').collection('playback_state').doc('main_state');
+      // 현재 재생 시간을 가져오고, 유효하지 않은 값일 경우 0으로 기본값 설정
+      const currentTime = player.getCurrentTime() || 0;
       const safe = {
-        timestamp: player.getCurrentTime(),
+        timestamp: currentTime,
         videoId: state.videoId,
         playlist: Array.isArray(state.playlist) ? state.playlist : [],
         lastUpdatedBy: clientId,
@@ -257,6 +262,12 @@
             player.seekTo(state.timestamp, true);
         }
 
+        // Only start playback after the first sync is complete AND the player is ready.
+        if (!initialSyncDone && playerReady && localPlaylist.length > 0) {
+            playVideo(0); // Play the first song on initial load
+        }
+        initialSyncDone = true;
+
       } catch (e) {
         console.error("Sync error:", e);
       }
@@ -282,6 +293,10 @@
         debouncedSave(currentState());
       });
 
+      div.addEventListener('click', () => {
+        playVideo(index);
+      });
+      
       listEl.appendChild(div);
     });
   }
@@ -326,33 +341,51 @@
     };
   }
 
-  async function playNext() {
-    if (!localPlaylist.length) {
-      if (player && player.getPlayerState() !== YT.PlayerState.PAUSED) {
-          player.pauseVideo();
-      }
-      return;
-    }
-    
-    let nextSong = null;
-    const currentVideo = player ? player.getVideoData()?.video_id : null;
-    const lastSong = localPlaylist[localPlaylist.length - 1];
+  function playVideo(index) {
+    if (localPlaylist.length === 0) return;
 
-    if (lastSong && lastSong.videoId !== currentVideo) {
-      nextSong = lastSong;
-    } else {
-      const randomIdx = Math.floor(Math.random() * localPlaylist.length);
-      nextSong = localPlaylist[randomIdx];
+    if (index >= localPlaylist.length) {
+      index = 0;
+    } else if (index < 0) {
+      index = localPlaylist.length - 1;
     }
-    
+
+    const nextSong = localPlaylist[index];
     if (nextSong) {
       try {
         if (player) {
           player.loadVideoById(nextSong.videoId, 0);
           player.playVideo();
+          currentPlayingIndex = index;
         }
-      } catch {}
+      } catch (e) {
+        console.error("Error playing video:", e);
+      }
     }
+  }
+
+  function playNext() {
+    if (localPlaylist.length === 0) {
+      if (player && player.getPlayerState() !== YT.PlayerState.PAUSED) {
+        player.pauseVideo();
+      }
+      return;
+    }
+    
+    let nextIndex = (currentPlayingIndex + 1) % localPlaylist.length;
+    playVideo(nextIndex);
+  }
+
+  function playPrev() {
+    if (localPlaylist.length === 0) {
+      if (player && player.getPlayerState() !== YT.PlayerState.PAUSED) {
+        player.pauseVideo();
+      }
+      return;
+    }
+    
+    let prevIndex = (currentPlayingIndex - 1 + localPlaylist.length) % localPlaylist.length;
+    playVideo(prevIndex);
   }
 
   function wireUI() {
@@ -409,14 +442,26 @@
       }
     });
 
-    // '사' 클릭 시 다음 곡 재생 기능 추가
+    // '사' 클릭: 이전 곡
+    prevSongTrigger.addEventListener('click', () => {
+        playPrev();
+        showMessage("이전 곡으로 넘어갑니다.");
+    });
+
+    // '띵' 클릭: 현재 곡 재생
+    playSongTrigger.addEventListener('click', () => {
+        if (player && player.getVideoData() && player.getPlayerState() !== YT.PlayerState.UNSTARTED) {
+            player.seekTo(0, true);
+            showMessage("현재 곡을 다시 재생합니다.");
+        } else {
+            showMessage("재생 중인 곡이 없습니다.");
+        }
+    });
+
+    // '어' 클릭: 다음 곡
     nextSongTrigger.addEventListener('click', () => {
-      if (player && player.getVideoData() && player.getPlayerState() !== YT.PlayerState.UNSTARTED) {
-          player.seekTo(0, true);
-          showMessage("현재 곡을 다시 재생합니다.");
-      } else {
-          showMessage("재생 중인 곡이 없습니다.");
-      }
+        playNext();
+        showMessage("다음 곡으로 넘어갑니다.");
     });
   }
 
