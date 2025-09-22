@@ -103,10 +103,13 @@
       <span class="muted"></span>
     </div>
 
+    <!-- Combined input and button row -->
     <div class="row" style="margin-top:10px">
       <input id="url" placeholder="유튜브 링크 또는 ID를 붙여넣기"/>
       <button id="add" class="btn">추가</button>
+      <button id="burstCallToggle" class="btn btn-toggle">버스트콜</button>
     </div>
+    
     <div id="manual-input" style="display:none; margin-top: 10px;">
       <div class="row">
         <input id="manualTitle" placeholder="제목을 수동으로 입력해주세요"/>
@@ -114,10 +117,6 @@
       <div class="row" style="margin-top: 10px;">
         <input id="manualArtist" placeholder="아티스트를 수동으로 입력해주세요"/>
       </div>
-    </div>
-
-    <div class="row" style="margin-top:10px">
-        <button id="burstCallToggle" class="btn btn-toggle">버스트콜</button>
     </div>
 
     <div id="playlist" class="card" style="margin:10px 0 0 0">
@@ -309,9 +308,7 @@
         case YT.PlayerState.PLAYING:
             const currentVideoId = player.getVideoData().video_id;
             if (currentVideoId && currentVideoId.length === 11) {
-                globalState.videoId = currentVideoId;
-                globalState.timestamp = player.getCurrentTime();
-                renderCurrentSongInfo();
+                updatePlayingSong(currentVideoId);
             }
             break;
         case YT.PlayerState.PAUSED:
@@ -389,6 +386,10 @@
       
       globalState.playlist = Array.isArray(playlistData.playlist) ? playlistData.playlist : [];
       renderList();
+      // 재생목록이 업데이트될 때 현재 재생 중인 곡 정보도 갱신
+      if (player && player.getPlayerState() === YT.PlayerState.PLAYING) {
+        updatePlayingSong(player.getVideoData().video_id);
+      }
     }, (err) => { console.error("Playlist subscription error: " + err.message); });
 
     // 현재 재생 중인 곡의 노트 정보 실시간 동기화
@@ -442,6 +443,7 @@
       const div = document.createElement('div');
       div.className = 'item';
       div.dataset.videoId = item.videoId;
+      div.dataset.index = index; // Store index for later use
 
       const infoIcon = document.createElement('button');
       infoIcon.className = 'info-icon';
@@ -471,6 +473,7 @@
       
       div.addEventListener('click', () => {
         const videoId = div.dataset.videoId;
+        const songIndex = parseInt(div.dataset.index, 10);
         if (globalState.isBurstCallMode) {
           const now = Date.now();
           const lastBurstCall = globalState.lastBurstCallTimestamp;
@@ -486,8 +489,8 @@
             burstCallToggleBtn.classList.remove('active');
           }
         } else {
-          player.loadVideoById(videoId, 0);
-          player.playVideo();
+          // 재생목록에서 곡을 클릭했을 때 바로 정보 업데이트
+          playVideo(songIndex);
           showMessage("해당 곡을 재생합니다.");
         }
       });
@@ -499,6 +502,22 @@
         playRandomVideo();
     }
     renderCurrentSongInfo();
+  }
+
+  // Helper function to update the current playing song and its information
+  function updatePlayingSong(videoId) {
+    const songIndex = globalState.playlist.findIndex(item => item.videoId === videoId);
+    if (songIndex !== -1) {
+      globalState.currentPlayingIndex = songIndex;
+      globalState.videoId = videoId;
+      renderCurrentSongInfo();
+    } else {
+      // If the song is not in the playlist, show generic info
+      globalState.currentPlayingIndex = -1;
+      globalState.videoId = '';
+      currentSongInfoEl.innerHTML = '<span class="muted">재생목록에 없는 곡입니다.</span>';
+      currentSongNotesEl.innerHTML = '';
+    }
   }
 
   function renderCurrentSongInfo() {
@@ -655,6 +674,7 @@
 
       player.loadVideoById(videoId, 0);
       player.playVideo();
+      updatePlayingSong(videoId); // Update song info after burst call
     } catch (e) {
       console.error("버스트콜 실패:", e);
       showMessage("버스트콜에 실패했습니다. " + e.message, 'error');
@@ -707,7 +727,7 @@
         if (player) {
           player.loadVideoById(nextSong.videoId, 0);
           player.playVideo();
-          globalState.currentPlayingIndex = index;
+          updatePlayingSong(nextSong.videoId);
         }
       } catch (e) {
         console.error("Error playing video:", e);
@@ -786,7 +806,7 @@
         const videoDetails = await fetchVideoDetails(videoId);
         const newPlaylist = [...globalState.playlist, {
           title: videoDetails.title,
-          artist: videoDetails.artist,
+          artist: videoDetails.channelTitle,
           videoId: videoId
         }];
         updatePlaylist(newPlaylist);
