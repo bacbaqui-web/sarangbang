@@ -70,6 +70,50 @@
       white-space: nowrap;
       text-overflow: ellipsis;
     }
+    /* Buster Call Overlay */
+    .buster-call-overlay {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.8);
+        color: #fff;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        text-align: center;
+        font-weight: bold;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        z-index: 999;
+        transition: opacity 0.5s ease-in-out;
+        opacity: 0;
+        pointer-events: none; /* Allows clicks to pass through when hidden */
+    }
+    .buster-call-overlay.show {
+        opacity: 1;
+    }
+    .buster-call-overlay h2 {
+        font-size: 3em;
+        margin: 0;
+        animation: pulse 1s infinite;
+    }
+    .buster-call-overlay p {
+        font-size: 1.5em;
+        margin: 0;
+    }
+    @keyframes pulse {
+        0% {
+            transform: scale(1);
+        }
+        50% {
+            transform: scale(1.05);
+        }
+        100% {
+            transform: scale(1);
+        }
+    }
   </style>
   <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
@@ -93,6 +137,10 @@
         <button id="prev-song-btn" class="prev">&lt;</button>
         <button id="next-song-btn" class="next">&gt;</button>
       </div>
+      <div id="buster-call-overlay" class="buster-call-overlay">
+        <h2>버스터콜!!!</h2>
+        <p>모두집중!!!</p>
+      </div>
     </div>
     
     <div id="currentSongInfo" class="text-center" style="margin-top: 10px;">
@@ -107,7 +155,7 @@
     <div class="row" style="margin-top:10px">
       <input id="url" placeholder="유튜브 링크 또는 ID를 붙여넣기"/>
       <button id="add" class="btn">추가</button>
-      <button id="burstCallToggle" class="btn btn-toggle">버스트콜</button>
+      <button id="busterCallToggle" class="btn btn-toggle">버스터콜</button>
     </div>
     
     <div id="manual-input" style="display:none; margin-top: 10px;">
@@ -180,11 +228,12 @@
   const manualInputDiv = document.getElementById('manual-input');
   const manualTitleInput = document.getElementById('manualTitle');
   const manualArtistInput = document.getElementById('manualArtist');
-  const burstCallToggleBtn = document.getElementById('burstCallToggle');
+  const busterCallToggleBtn = document.getElementById('busterCallToggle');
   const prevSongBtn = document.getElementById('prev-song-btn');
   const nextSongBtn = document.getElementById('next-song-btn');
   const currentSongInfoEl = document.getElementById('currentSongInfo');
   const currentSongNotesEl = document.getElementById('currentSongNotes');
+  const busterCallOverlay = document.getElementById('buster-call-overlay');
 
   // Info modal elements
   const infoModal = document.getElementById('infoModal');
@@ -209,9 +258,9 @@
     timestamp: 0,
     lastUpdatedBy: null,
     currentPlayingIndex: -1,
-    isBurstCallMode: false,
-    lastBurstCallTimestamp: 0,
-    burstCallCoolDown: 30 * 1000 // 30초
+    isBusterCallMode: false,
+    lastBusterCallTimestamp: 0,
+    busterCallCoolDown: 30 * 1000 // 30초
   };
 
   let authed = false;
@@ -317,39 +366,39 @@
     }
   }
 
-  // 버스트콜 상태를 저장하는 함수
-  function saveBurstCallState() {
+  // 버스터콜 상태를 저장하는 함수
+  function saveBusterCallState() {
       if (!authed) return;
       const db = firebase.firestore();
       const ref = db.collection('artifacts').doc(appId).collection('public')
-          .doc('data').collection('burst_call_state').doc('main_state');
+          .doc('data').collection('buster_call_state').doc('main_state');
       
       ref.set({
-          lastBurstCallTimestamp: firebase.firestore.FieldValue.serverTimestamp(),
+          lastBusterCallTimestamp: firebase.firestore.FieldValue.serverTimestamp(),
           updatedBy: clientId,
       }, { merge: true }).then(() => {
-          console.log('Burst call state saved.');
+          console.log('Buster call state saved.');
       }).catch(e => {
-          console.error('Failed to save burst call state:', e);
+          console.error('Failed to save buster call state:', e);
       });
   }
 
   function startRealtime() {
     const db = firebase.firestore();
 
-    // 버스트콜 상태 실시간 동기화
-    const burstCallRef = db.collection('artifacts').doc(appId).collection('public')
-        .doc('data').collection('burst_call_state').doc('main_state');
+    // 버스터콜 상태 실시간 동기화
+    const busterCallRef = db.collection('artifacts').doc(appId).collection('public')
+        .doc('data').collection('buster_call_state').doc('main_state');
     
-    burstCallRef.onSnapshot(snap => {
+    busterCallRef.onSnapshot(snap => {
         if (!snap.exists) return;
         const state = snap.data();
-        if (state && state.lastBurstCallTimestamp) {
-            globalState.lastBurstCallTimestamp = state.lastBurstCallTimestamp.toMillis();
-            checkBurstCallCooldown();
+        if (state && state.lastBusterCallTimestamp) {
+            globalState.lastBusterCallTimestamp = state.lastBusterCallTimestamp.toMillis();
+            checkBusterCallCooldown();
         }
     }, err => {
-        console.error("Burst call state subscription error:", err);
+        console.error("Buster call state subscription error:", err);
     });
 
     // 재생 상태 실시간 동기화
@@ -474,19 +523,19 @@
       div.addEventListener('click', () => {
         const videoId = div.dataset.videoId;
         const songIndex = parseInt(div.dataset.index, 10);
-        if (globalState.isBurstCallMode) {
+        if (globalState.isBusterCallMode) {
           const now = Date.now();
-          const lastBurstCall = globalState.lastBurstCallTimestamp;
+          const lastBusterCall = globalState.lastBusterCallTimestamp;
           
-          if (now - lastBurstCall > globalState.burstCallCoolDown) {
-            burstCall(videoId);
-            globalState.isBurstCallMode = false;
-            burstCallToggleBtn.classList.remove('active');
+          if (now - lastBusterCall > globalState.busterCallCoolDown) {
+            busterCall(videoId);
+            globalState.isBusterCallMode = false;
+            busterCallToggleBtn.classList.remove('active');
           } else {
-            const remaining = Math.ceil((globalState.burstCallCoolDown - (now - lastBurstCall)) / 1000);
-            showMessage(`버스트콜은 ${remaining}초 후에 다시 사용할 수 있습니다.`, 'info');
-            globalState.isBurstCallMode = false;
-            burstCallToggleBtn.classList.remove('active');
+            const remaining = Math.ceil((globalState.busterCallCoolDown - (now - lastBusterCall)) / 1000);
+            showMessage(`버스터콜은 ${remaining}초 후에 다시 사용할 수 있습니다.`, 'info');
+            globalState.isBusterCallMode = false;
+            busterCallToggleBtn.classList.remove('active');
           }
         } else {
           // 재생목록에서 곡을 클릭했을 때 바로 정보 업데이트
@@ -565,17 +614,17 @@
       }
   }
 
-  function checkBurstCallCooldown() {
+  function checkBusterCallCooldown() {
       const now = Date.now();
-      const cooldownRemaining = globalState.lastBurstCallTimestamp + globalState.burstCallCoolDown - now;
+      const cooldownRemaining = globalState.lastBusterCallTimestamp + globalState.busterCallCoolDown - now;
       if (cooldownRemaining > 0) {
           const remainingSeconds = Math.ceil(cooldownRemaining / 1000);
-          burstCallToggleBtn.disabled = true;
-          burstCallToggleBtn.textContent = `버스트콜 (${remainingSeconds}초)`;
-          setTimeout(checkBurstCallCooldown, 1000);
+          busterCallToggleBtn.disabled = true;
+          busterCallToggleBtn.textContent = `버스터콜 (${remainingSeconds}초)`;
+          setTimeout(checkBusterCallCooldown, 1000);
       } else {
-          burstCallToggleBtn.disabled = false;
-          burstCallToggleBtn.textContent = '버스트콜';
+          busterCallToggleBtn.disabled = false;
+          busterCallToggleBtn.textContent = '버스터콜';
       }
   }
 
@@ -651,8 +700,8 @@
     }
   }
 
-  // 버스트콜 기능
-  function burstCall(videoId) {
+  // 버스터콜 기능
+  function busterCall(videoId) {
     if (!authed) {
       showMessage("로그인되지 않았습니다. 잠시 후 다시 시도해주세요.", 'error');
       return;
@@ -669,15 +718,21 @@
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
 
-      showMessage("모든 사용자에게 버스트콜을 보냈습니다!", 'ok');
-      saveBurstCallState();
+      showMessage("모든 사용자에게 버스터콜을 보냈습니다!", 'ok');
+      saveBusterCallState();
+
+      // Show buster call overlay
+      busterCallOverlay.classList.add('show');
+      setTimeout(() => {
+        busterCallOverlay.classList.remove('show');
+      }, 3000);
 
       player.loadVideoById(videoId, 0);
       player.playVideo();
-      updatePlayingSong(videoId); // Update song info after burst call
+      updatePlayingSong(videoId); // Update song info after buster call
     } catch (e) {
-      console.error("버스트콜 실패:", e);
-      showMessage("버스트콜에 실패했습니다. " + e.message, 'error');
+      console.error("버스터콜 실패:", e);
+      showMessage("버스터콜에 실패했습니다. " + e.message, 'error');
     }
   }
 
@@ -831,11 +886,11 @@
       }
     });
 
-    burstCallToggleBtn.addEventListener('click', () => {
-        globalState.isBurstCallMode = !globalState.isBurstCallMode;
-        burstCallToggleBtn.classList.toggle('active', globalState.isBurstCallMode);
-        burstCallToggleBtn.textContent = globalState.isBurstCallMode ? "버스트콜 (활성화)" : "버스트콜";
-        showMessage(globalState.isBurstCallMode ? "버스트콜 모드가 활성화되었습니다. 재생목록을 눌러 버스트콜을 시작하세요." : "버스트콜 모드가 비활성화되었습니다.");
+    busterCallToggleBtn.addEventListener('click', () => {
+        globalState.isBusterCallMode = !globalState.isBusterCallMode;
+        busterCallToggleBtn.classList.toggle('active', globalState.isBusterCallMode);
+        busterCallToggleBtn.textContent = globalState.isBusterCallMode ? "버스터콜 (활성화)" : "버스터콜";
+        showMessage(globalState.isBusterCallMode ? "버스터콜 모드가 활성화되었습니다. 재생목록을 눌러 버스터콜을 시작하세요." : "버스터콜 모드가 비활성화되었습니다.");
     });
     
     prevSongBtn.addEventListener('click', () => {
