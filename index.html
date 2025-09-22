@@ -11,6 +11,7 @@
     .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
     .btn { background: #63b3ed; color: #fff; border: 0; border-radius: 999px; padding: .6rem 1rem; cursor: pointer; transition: background 0.2s; }
     .btn:hover { background: #4299e1; }
+    .btn:disabled { background: #4a5568; cursor: not-allowed; }
     .btn-toggle { background: #555; }
     .btn-toggle.active { background: #38b2ac; }
     .ok { color: #81e6d9; }
@@ -46,7 +47,29 @@
     .modal-content .close-btn { color: #aaa; float: right; font-size: 28px; font-weight: bold; }
     .modal-content .close-btn:hover, .modal-content .close-btn:focus { color: #fff; text-decoration: none; cursor: pointer; }
     .modal-content .save-btn { background: #38b2ac; color: #fff; border: 0; border-radius: 999px; padding: .6rem 1rem; margin-top: 10px; cursor: pointer; }
-    
+
+    /* Current Song Info Display */
+    #currentSongNotes {
+        border-top: 1px solid #444;
+        margin-top: 10px;
+        padding-top: 10px;
+    }
+    #currentSongNotes h4 {
+        margin: 0;
+        margin-bottom: 5px;
+        color: #63b3ed;
+    }
+    #currentSongNotes p {
+        margin: 0;
+        margin-bottom: 10px;
+        color: #ccc;
+    }
+    .song-details {
+      flex: 1;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
   </style>
   <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
@@ -72,6 +95,14 @@
       </div>
     </div>
     
+    <div id="currentSongInfo" class="text-center" style="margin-top: 10px;">
+      <span class="muted">현재 재생 중인 곡이 없습니다.</span>
+    </div>
+
+    <div id="currentSongNotes">
+      <span class="muted"></span>
+    </div>
+
     <div class="row" style="margin-top:10px">
       <input id="url" placeholder="유튜브 링크 또는 ID를 붙여넣기"/>
       <button id="add" class="btn">추가</button>
@@ -99,7 +130,15 @@
 <div id="infoModal" class="modal">
   <div class="modal-content">
     <span class="close-btn">&times;</span>
-    <h3 id="modalTitle">노래 정보</h3>
+    <h3>노래 정보</h3>
+    <div class="modal-section">
+      <label for="songTitleInput">노래 제목</label>
+      <input type="text" id="songTitleInput" placeholder="노래 제목을 입력하세요..."/>
+    </div>
+    <div class="modal-section">
+      <label for="artistInput">아티스트</label>
+      <input type="text" id="artistInput" placeholder="아티스트 이름을 입력하세요..."/>
+    </div>
     <div class="modal-section">
       <label for="uploaderInput">올린 사람</label>
       <input type="text" id="uploaderInput" placeholder="이름을 입력하세요..."/>
@@ -145,9 +184,13 @@
   const burstCallToggleBtn = document.getElementById('burstCallToggle');
   const prevSongBtn = document.getElementById('prev-song-btn');
   const nextSongBtn = document.getElementById('next-song-btn');
+  const currentSongInfoEl = document.getElementById('currentSongInfo');
+  const currentSongNotesEl = document.getElementById('currentSongNotes');
 
   // Info modal elements
   const infoModal = document.getElementById('infoModal');
+  const songTitleInput = document.getElementById('songTitleInput');
+  const artistInput = document.getElementById('artistInput');
   const uploaderInput = document.getElementById('uploaderInput');
   const infoTextarea = document.getElementById('infoTextarea');
   const commentTextarea = document.getElementById('commentTextarea');
@@ -158,6 +201,7 @@
   // ----- state/guards -----
   const appId = 'default-app-id';
   const clientId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Math.random());
+  let userId = null;
   
   // Centralized state management
   const globalState = {
@@ -202,7 +246,8 @@
     try {
       await firebase.auth().signInAnonymously();
       authed = true;
-      console.log("Anonymous sign-in successful, user ID:", firebase.auth().currentUser.uid);
+      userId = firebase.auth().currentUser.uid;
+      console.log("Anonymous sign-in successful, user ID:", userId);
     } catch (e) {
       console.error("Authentication failed: " + e.message);
       return;
@@ -262,11 +307,11 @@
             playRandomVideo();
             break;
         case YT.PlayerState.PLAYING:
-            // 동영상 ID가 로드된 후에만 상태를 업데이트하고 저장합니다.
             const currentVideoId = player.getVideoData().video_id;
             if (currentVideoId && currentVideoId.length === 11) {
                 globalState.videoId = currentVideoId;
                 globalState.timestamp = player.getCurrentTime();
+                renderCurrentSongInfo();
             }
             break;
         case YT.PlayerState.PAUSED:
@@ -274,8 +319,6 @@
             break;
     }
   }
-
-  // ----- save/sync functions -----
 
   // 버스트콜 상태를 저장하는 함수
   function saveBurstCallState() {
@@ -306,6 +349,7 @@
         const state = snap.data();
         if (state && state.lastBurstCallTimestamp) {
             globalState.lastBurstCallTimestamp = state.lastBurstCallTimestamp.toMillis();
+            checkBurstCallCooldown();
         }
     }, err => {
         console.error("Burst call state subscription error:", err);
@@ -346,6 +390,12 @@
       globalState.playlist = Array.isArray(playlistData.playlist) ? playlistData.playlist : [];
       renderList();
     }, (err) => { console.error("Playlist subscription error: " + err.message); });
+
+    // 현재 재생 중인 곡의 노트 정보 실시간 동기화
+    const notesRef = db.collection('artifacts').doc(appId).collection('users').doc(userId).collection('notes');
+    notesRef.onSnapshot(async (snap) => {
+        renderCurrentSongNotes();
+    }, (err) => { console.error("Notes subscription error: " + err.message); });
   }
 
   // Updates the playlist in the global state and triggers a save
@@ -384,6 +434,7 @@
     listEl.innerHTML = '';
     if (!globalState.playlist.length) {
       listEl.innerHTML = '<div class="muted">재생목록이 비어있습니다.</div>';
+      renderCurrentSongInfo();
       return;
     }
     
@@ -394,13 +445,14 @@
 
       const infoIcon = document.createElement('button');
       infoIcon.className = 'info-icon';
-      infoIcon.innerHTML = '&#x24D8;'; // Circle with i
+      infoIcon.innerHTML = '&#x24D8;';
       infoIcon.addEventListener('click', (e) => {
         e.stopPropagation();
         openInfoModal(item.videoId);
       });
 
       const titleSpan = document.createElement('span');
+      titleSpan.className = 'song-details';
       titleSpan.textContent = `${item.artist} - ${item.title}`;
       
       const deleteBtn = document.createElement('button');
@@ -417,7 +469,6 @@
       div.appendChild(titleSpan);
       div.appendChild(deleteBtn);
       
-      // 재생목록 아이템 클릭 이벤트 리스너 추가
       div.addEventListener('click', () => {
         const videoId = div.dataset.videoId;
         if (globalState.isBurstCallMode) {
@@ -431,7 +482,6 @@
           } else {
             const remaining = Math.ceil((globalState.burstCallCoolDown - (now - lastBurstCall)) / 1000);
             showMessage(`버스트콜은 ${remaining}초 후에 다시 사용할 수 있습니다.`, 'info');
-            // 버스트콜 모드 자동 해제
             globalState.isBurstCallMode = false;
             burstCallToggleBtn.classList.remove('active');
           }
@@ -448,13 +498,79 @@
     if (globalState.playlist.length > 0 && (!player || !player.getVideoData())) {
         playRandomVideo();
     }
+    renderCurrentSongInfo();
+  }
+
+  function renderCurrentSongInfo() {
+      if (globalState.currentPlayingIndex >= 0 && globalState.currentPlayingIndex < globalState.playlist.length) {
+          const song = globalState.playlist[globalState.currentPlayingIndex];
+          currentSongInfoEl.innerHTML = `<span style="font-size: 1.2em; font-weight: bold;">${song.title}</span><br><span class="muted">${song.artist}</span>`;
+          renderCurrentSongNotes();
+      } else {
+          currentSongInfoEl.innerHTML = '<span class="muted">현재 재생 중인 곡이 없습니다.</span>';
+          currentSongNotesEl.innerHTML = '';
+      }
+  }
+
+  async function renderCurrentSongNotes() {
+      currentSongNotesEl.innerHTML = '<span class="muted">정보를 불러오는 중...</span>';
+      
+      const videoId = globalState.videoId;
+      if (!videoId || !userId) {
+          currentSongNotesEl.innerHTML = '<span class="muted">작성된 정보가 없습니다.</span>';
+          return;
+      }
+
+      const db = firebase.firestore();
+      const docRef = db.collection('artifacts').doc(appId).collection('users').doc(userId).collection('notes').doc(videoId);
+      
+      try {
+          const docSnap = await docRef.get();
+          if (docSnap.exists) {
+              const data = docSnap.data();
+              const uploader = data.uploader || '알 수 없음';
+              const info = data.info || '작성된 정보가 없습니다.';
+              const comment = data.comment || '작성된 댓글이 없습니다.';
+              
+              currentSongNotesEl.innerHTML = `
+                  <p><strong>올린 사람:</strong> ${uploader}</p>
+                  <p><strong>노래 정보:</strong> ${info}</p>
+                  <p><strong>댓글:</strong> ${comment}</p>
+              `;
+          } else {
+              currentSongNotesEl.innerHTML = '<span class="muted">작성된 정보가 없습니다.</span>';
+          }
+      } catch(e) {
+          console.error("Failed to render current song notes:", e);
+          currentSongNotesEl.innerHTML = '<span class="muted">정보를 불러오는 데 실패했습니다.</span>';
+      }
+  }
+
+  function checkBurstCallCooldown() {
+      const now = Date.now();
+      const cooldownRemaining = globalState.lastBurstCallTimestamp + globalState.burstCallCoolDown - now;
+      if (cooldownRemaining > 0) {
+          const remainingSeconds = Math.ceil(cooldownRemaining / 1000);
+          burstCallToggleBtn.disabled = true;
+          burstCallToggleBtn.textContent = `버스트콜 (${remainingSeconds}초)`;
+          setTimeout(checkBurstCallCooldown, 1000);
+      } else {
+          burstCallToggleBtn.disabled = false;
+          burstCallToggleBtn.textContent = '버스트콜';
+      }
   }
 
   // Info modal functions
   function openInfoModal(videoId) {
     currentInfoVideoId = videoId;
+    const songItem = globalState.playlist.find(item => item.videoId === videoId);
+    if (songItem) {
+        songTitleInput.value = songItem.title;
+        artistInput.value = songItem.artist;
+    }
+
     const db = firebase.firestore();
-    const docRef = db.collection('artifacts').doc(appId).collection('users').doc(firebase.auth().currentUser.uid).collection('notes').doc(videoId);
+    const docRef = db.collection('artifacts').doc(appId).collection('users').doc(userId).collection('notes').doc(videoId);
     
     docRef.get().then(docSnap => {
         if (docSnap.exists) {
@@ -485,8 +601,21 @@
   async function saveInfo() {
     if (!currentInfoVideoId || !authed) return;
     
+    const newTitle = songTitleInput.value.trim();
+    const newArtist = artistInput.value.trim();
+    
+    // 1. Update the song title and artist in the main playlist
+    const songIndex = globalState.playlist.findIndex(item => item.videoId === currentInfoVideoId);
+    if (songIndex !== -1 && (globalState.playlist[songIndex].title !== newTitle || globalState.playlist[songIndex].artist !== newArtist)) {
+      const newPlaylist = [...globalState.playlist];
+      newPlaylist[songIndex].title = newTitle;
+      newPlaylist[songIndex].artist = newArtist;
+      updatePlaylist(newPlaylist);
+    }
+    
+    // 2. Save private notes
     const db = firebase.firestore();
-    const docRef = db.collection('artifacts').doc(appId).collection('users').doc(firebase.auth().currentUser.uid).collection('notes').doc(currentInfoVideoId);
+    const docRef = db.collection('artifacts').doc(appId).collection('users').doc(userId).collection('notes').doc(currentInfoVideoId);
     
     try {
         await docRef.set({
@@ -514,7 +643,6 @@
       const ref = db.collection('artifacts').doc(appId).collection('public')
         .doc('data').collection('playback_state').doc('main_state');
       
-      // 강제로 videoId와 timestamp를 업데이트하여 다른 사용자에게 전파
       ref.set({
         videoId: videoId,
         timestamp: 0,
@@ -523,9 +651,8 @@
       }, { merge: true });
 
       showMessage("모든 사용자에게 버스트콜을 보냈습니다!", 'ok');
-      saveBurstCallState(); // 버스트콜 상태 저장
+      saveBurstCallState();
 
-      // 현재 플레이어도 바로 재생
       player.loadVideoById(videoId, 0);
       player.playVideo();
     } catch (e) {
@@ -534,13 +661,10 @@
     }
   }
 
-  // 수정: 순수 ID와 URL을 모두 처리하도록 로직 변경
   function getVideoId(url) {
-    // 1. 먼저 순수 11자리 ID인지 확인
     if (url.length === 11 && !url.includes(' ')) {
       return url;
     }
-    // 2. 아니면 기존의 URL 정규식 검사 수행
     url = url.replace('music.youtube.com', 'www.youtube.com');
     const regex = /(?:youtube\.com\/(?:[^\/]+\/.+\/|(?:v|e(?:mbed)?)\/|.*[?&]v=)|youtu\.be\/)([^"&?\/\s]{11})/i;
     const match = url.match(regex);
@@ -551,7 +675,6 @@
     const apiUrl = `https://www.googleapis.com/youtube/v3/videos?part=snippet&id=${videoId}&key=${YOUTUBE_API_KEY}`;
     const response = await fetch(apiUrl);
     if (!response.ok) {
-        // Handle API errors gracefully
         throw new Error(`API Error: ${response.status} ${response.statusText}`);
     }
     const data = await response.json();
@@ -559,7 +682,6 @@
       const snippet = data.items[0].snippet;
       return {
         title: snippet.title,
-        // 수정: API 응답에서 channelTitle을 artist로 사용
         artist: snippet.channelTitle
       };
     } else {
@@ -664,7 +786,6 @@
         const videoDetails = await fetchVideoDetails(videoId);
         const newPlaylist = [...globalState.playlist, {
           title: videoDetails.title,
-          // 수정: fetchVideoDetails에서 반환된 'artist' 필드를 사용
           artist: videoDetails.artist,
           videoId: videoId
         }];
@@ -690,7 +811,6 @@
       }
     });
 
-    // 버스트콜 토글 버튼 이벤트
     burstCallToggleBtn.addEventListener('click', () => {
         globalState.isBurstCallMode = !globalState.isBurstCallMode;
         burstCallToggleBtn.classList.toggle('active', globalState.isBurstCallMode);
@@ -698,25 +818,19 @@
         showMessage(globalState.isBurstCallMode ? "버스트콜 모드가 활성화되었습니다. 재생목록을 눌러 버스트콜을 시작하세요." : "버스트콜 모드가 비활성화되었습니다.");
     });
     
-    // Previous song button
     prevSongBtn.addEventListener('click', () => {
         playPrev();
         showMessage("이전 곡으로 넘어갑니다.");
     });
 
-    // Next song button
     nextSongBtn.addEventListener('click', () => {
         playNext();
         showMessage("다음 곡으로 넘어갑니다.");
     });
     
-    // Info modal close button
     modalCloseBtn.addEventListener('click', closeInfoModal);
-    
-    // Save info button
     saveInfoBtn.addEventListener('click', saveInfo);
 
-    // Close modal when clicking outside
     window.addEventListener('click', (event) => {
       if (event.target === infoModal) {
         closeInfoModal();
@@ -724,7 +838,6 @@
     });
   }
 
-  // ----- Start up -----
   window.onload = function() {
     boot();
   };
