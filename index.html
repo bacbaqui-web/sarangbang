@@ -23,10 +23,30 @@
     .item:last-child { border-bottom: none; }
     .item .delete-btn { background: none; border: none; color: #fc8181; cursor: pointer; font-size: 1.2em; line-height: 1; margin-left: 10px; opacity: 0.7; transition: opacity 0.2s; }
     .item .delete-btn:hover { opacity: 1; }
+    .item .info-icon { background: none; border: none; color: #63b3ed; cursor: pointer; font-size: 1em; margin-right: 10px; }
     .video-player { aspect-ratio: 16 / 9; width: 100%; max-width: 800px; margin: 8px auto; border-radius: 8px; overflow: hidden; position: relative; }
     .main-title { text-align: center; }
     .sub-title { text-align: center; font-size: 0.9em; margin-top: -15px; color: #a0aec0; }
     .message-box { display: none; background: #2d3748; color: #fff; padding: 12px; border-radius: 8px; text-align: center; position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000; }
+
+    /* Previous/Next buttons */
+    .player-controls { display: flex; justify-content: space-between; align-items: center; position: absolute; top: 50%; width: 100%; transform: translateY(-50%); }
+    .player-controls button { background: rgba(0,0,0,0.5); border: none; color: white; font-size: 2rem; padding: 10px; cursor: pointer; opacity: 0.7; transition: opacity 0.2s; }
+    .player-controls button:hover { opacity: 1; }
+    .player-controls button.prev { border-radius: 0 10px 10px 0; }
+    .player-controls button.next { border-radius: 10px 0 0 10px; }
+    
+    /* Info modal */
+    .modal { display: none; position: fixed; z-index: 1001; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.4); justify-content: center; align-items: center; }
+    .modal-content { background-color: #222; padding: 20px; border: 1px solid #444; width: 80%; max-width: 500px; border-radius: 10px; position: relative; }
+    .modal-content .modal-section { margin-bottom: 15px; }
+    .modal-content .modal-section label { display: block; margin-bottom: 5px; font-weight: bold; }
+    .modal-content input[type="text"], .modal-content textarea { width: 100%; box-sizing: border-box; background: #1f2937; color: #eee; border: 1px solid #374151; border-radius: 8px; padding: 10px; outline: none; }
+    .modal-content textarea { height: 100px; resize: vertical; }
+    .modal-content .close-btn { color: #aaa; float: right; font-size: 28px; font-weight: bold; }
+    .modal-content .close-btn:hover, .modal-content .close-btn:focus { color: #fff; text-decoration: none; cursor: pointer; }
+    .modal-content .save-btn { background: #38b2ac; color: #fff; border: 0; border-radius: 999px; padding: .6rem 1rem; margin-top: 10px; cursor: pointer; }
+    
   </style>
   <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
@@ -39,15 +59,17 @@
 <div id="message-box" class="message-box"></div>
 <div class="wrap">
   <div class="main-title">
-    <h1 id="title-text">
-      <span id="prev-song-trigger">사</span>랑방 띵곡 플레이<span id="next-song-trigger">어</span>
-    </h1>
+    <h1>사랑방 띵곡 플레이어</h1>
     <p class="sub-title">작가님들의 띵곡을 추천해주세요</p>
   </div>
   
   <div class="card">
     <div class="video-player">
       <div id="player"></div>
+      <div class="player-controls">
+        <button id="prev-song-btn" class="prev">&lt;</button>
+        <button id="next-song-btn" class="next">&gt;</button>
+      </div>
     </div>
     
     <div class="row" style="margin-top:10px">
@@ -64,12 +86,33 @@
     </div>
 
     <div class="row" style="margin-top:10px">
-        <button id="burstCallToggle" class="btn btn-toggle">버스트콜 모드</button>
+        <button id="burstCallToggle" class="btn btn-toggle">버스트콜</button>
     </div>
 
     <div id="playlist" class="card" style="margin:10px 0 0 0">
       <div class="muted">재생목록이 비어있습니다.</div>
     </div>
+  </div>
+</div>
+
+<!-- Info Modal -->
+<div id="infoModal" class="modal">
+  <div class="modal-content">
+    <span class="close-btn">&times;</span>
+    <h3 id="modalTitle">노래 정보</h3>
+    <div class="modal-section">
+      <label for="uploaderInput">올린 사람</label>
+      <input type="text" id="uploaderInput" placeholder="이름을 입력하세요..."/>
+    </div>
+    <div class="modal-section">
+      <label for="infoTextarea">노래에 대한 정보</label>
+      <textarea id="infoTextarea" placeholder="노트에 메모를 입력하세요..."></textarea>
+    </div>
+    <div class="modal-section">
+      <label for="commentTextarea">댓글</label>
+      <textarea id="commentTextarea" placeholder="댓글을 입력하세요..."></textarea>
+    </div>
+    <button id="saveInfoBtn" class="save-btn">저장</button>
   </div>
 </div>
 
@@ -100,9 +143,17 @@
   const manualTitleInput = document.getElementById('manualTitle');
   const manualArtistInput = document.getElementById('manualArtist');
   const burstCallToggleBtn = document.getElementById('burstCallToggle');
-  
-  const prevSongTrigger = document.getElementById('prev-song-trigger');
-  const nextSongTrigger = document.getElementById('next-song-trigger');
+  const prevSongBtn = document.getElementById('prev-song-btn');
+  const nextSongBtn = document.getElementById('next-song-btn');
+
+  // Info modal elements
+  const infoModal = document.getElementById('infoModal');
+  const uploaderInput = document.getElementById('uploaderInput');
+  const infoTextarea = document.getElementById('infoTextarea');
+  const commentTextarea = document.getElementById('commentTextarea');
+  const saveInfoBtn = document.getElementById('saveInfoBtn');
+  const modalCloseBtn = document.querySelector('.modal .close-btn');
+  let currentInfoVideoId = null;
 
   // ----- state/guards -----
   const appId = 'default-app-id';
@@ -117,6 +168,7 @@
     currentPlayingIndex: -1,
     isBurstCallMode: false,
     lastBurstCallTimestamp: 0,
+    burstCallCoolDown: 30 * 1000 // 30초
   };
 
   let authed = false;
@@ -215,75 +267,49 @@
             if (currentVideoId && currentVideoId.length === 11) {
                 globalState.videoId = currentVideoId;
                 globalState.timestamp = player.getCurrentTime();
-                if (globalState.isBurstCallMode) {
-                    // 버스트콜 모드일 때만 상태 저장
-                    savePlaybackState();
-                }
             }
             break;
         case YT.PlayerState.PAUSED:
             globalState.timestamp = player.getCurrentTime();
-            if (globalState.isBurstCallMode) {
-                // 버스트콜 모드일 때만 상태 저장
-                savePlaybackState();
-            }
             break;
     }
   }
 
   // ----- save/sync functions -----
 
-  // 재생 상태(videoId, timestamp)만 저장하는 함수
-  let playbackSaveTimer = null;
-  function savePlaybackState() {
-    if (!authed) return;
-    if (playbackSaveTimer) clearTimeout(playbackSaveTimer);
-    playbackSaveTimer = setTimeout(async () => {
-      try {
-        const db = firebase.firestore();
-        const ref = db.collection('artifacts').doc(appId).collection('public')
-          .doc('data').collection('playback_state').doc('main_state');
-        
-        await ref.set({
-          videoId: globalState.videoId,
-          timestamp: globalState.timestamp,
-          lastUpdatedBy: clientId,
-          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        }, { merge: true });
-
-        console.log('Playback state saved successfully.');
-      } catch (e) {
-        console.error("Failed to save playback state: " + e.message);
-      }
-    }, 300);
-  }
-
-  // 재생목록(playlist)만 저장하는 함수
-  let playlistSaveTimer = null;
-  function savePlaylistState() {
-    if (!authed) return;
-    if (playlistSaveTimer) clearTimeout(playlistSaveTimer);
-    playlistSaveTimer = setTimeout(async () => {
-      try {
-        const db = firebase.firestore();
-        const ref = db.collection('artifacts').doc(appId).collection('public')
-          .doc('data').collection('playlist_state').doc('main_playlist');
-
-        await ref.set({
-          playlist: globalState.playlist,
-          lastUpdatedBy: clientId,
-          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
-        }, { merge: true });
-
-        console.log('Playlist state saved successfully.');
-      } catch (e) {
-        console.error("Failed to save playlist state: " + e.message);
-      }
-    }, 300);
+  // 버스트콜 상태를 저장하는 함수
+  function saveBurstCallState() {
+      if (!authed) return;
+      const db = firebase.firestore();
+      const ref = db.collection('artifacts').doc(appId).collection('public')
+          .doc('data').collection('burst_call_state').doc('main_state');
+      
+      ref.set({
+          lastBurstCallTimestamp: firebase.firestore.FieldValue.serverTimestamp(),
+          updatedBy: clientId,
+      }, { merge: true }).then(() => {
+          console.log('Burst call state saved.');
+      }).catch(e => {
+          console.error('Failed to save burst call state:', e);
+      });
   }
 
   function startRealtime() {
     const db = firebase.firestore();
+
+    // 버스트콜 상태 실시간 동기화
+    const burstCallRef = db.collection('artifacts').doc(appId).collection('public')
+        .doc('data').collection('burst_call_state').doc('main_state');
+    
+    burstCallRef.onSnapshot(snap => {
+        if (!snap.exists) return;
+        const state = snap.data();
+        if (state && state.lastBurstCallTimestamp) {
+            globalState.lastBurstCallTimestamp = state.lastBurstCallTimestamp.toMillis();
+        }
+    }, err => {
+        console.error("Burst call state subscription error:", err);
+    });
 
     // 재생 상태 실시간 동기화
     const playbackRef = db.collection('artifacts').doc(appId).collection('public')
@@ -329,6 +355,30 @@
     savePlaylistState();
   }
 
+  // 재생목록(playlist)만 저장하는 함수
+  let playlistSaveTimer = null;
+  function savePlaylistState() {
+    if (!authed) return;
+    if (playlistSaveTimer) clearTimeout(playlistSaveTimer);
+    playlistSaveTimer = setTimeout(async () => {
+      try {
+        const db = firebase.firestore();
+        const ref = db.collection('artifacts').doc(appId).collection('public')
+          .doc('data').collection('playlist_state').doc('main_playlist');
+
+        await ref.set({
+          playlist: globalState.playlist,
+          lastUpdatedBy: clientId,
+          updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+
+        console.log('Playlist state saved successfully.');
+      } catch (e) {
+        console.error("Failed to save playlist state: " + e.message);
+      }
+    }, 300);
+  }
+
   // ----- UI/player -----
   function renderList() {
     listEl.innerHTML = '';
@@ -341,32 +391,49 @@
       const div = document.createElement('div');
       div.className = 'item';
       div.dataset.videoId = item.videoId;
-      div.innerHTML = `<span>${item.artist} - ${item.title}</span><button class="delete-btn" data-index="${index}">&#x2715;</button>`;
-      
-      div.querySelector('.delete-btn').addEventListener('click', (e) => {
+
+      const infoIcon = document.createElement('button');
+      infoIcon.className = 'info-icon';
+      infoIcon.innerHTML = '&#x24D8;'; // Circle with i
+      infoIcon.addEventListener('click', (e) => {
         e.stopPropagation();
-        const index = parseInt(e.target.dataset.index, 10);
+        openInfoModal(item.videoId);
+      });
+
+      const titleSpan = document.createElement('span');
+      titleSpan.textContent = `${item.artist} - ${item.title}`;
+      
+      const deleteBtn = document.createElement('button');
+      deleteBtn.className = 'delete-btn';
+      deleteBtn.innerHTML = '&#x2715;';
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
         const newPlaylist = [...globalState.playlist];
         newPlaylist.splice(index, 1);
         updatePlaylist(newPlaylist);
       });
       
+      div.appendChild(infoIcon);
+      div.appendChild(titleSpan);
+      div.appendChild(deleteBtn);
+      
       // 재생목록 아이템 클릭 이벤트 리스너 추가
       div.addEventListener('click', () => {
         const videoId = div.dataset.videoId;
-        const now = Date.now();
-        const cooldownMs = 60 * 1000;
-
         if (globalState.isBurstCallMode) {
-          if (now - globalState.lastBurstCallTimestamp > cooldownMs) {
+          const now = Date.now();
+          const lastBurstCall = globalState.lastBurstCallTimestamp;
+          
+          if (now - lastBurstCall > globalState.burstCallCoolDown) {
             burstCall(videoId);
             globalState.isBurstCallMode = false;
-            globalState.lastBurstCallTimestamp = now;
             burstCallToggleBtn.classList.remove('active');
-            burstCallToggleBtn.textContent = '버스트콜 모드 (비활성화)';
           } else {
-            const remaining = Math.ceil((cooldownMs - (now - globalState.lastBurstCallTimestamp)) / 1000);
+            const remaining = Math.ceil((globalState.burstCallCoolDown - (now - lastBurstCall)) / 1000);
             showMessage(`버스트콜은 ${remaining}초 후에 다시 사용할 수 있습니다.`, 'info');
+            // 버스트콜 모드 자동 해제
+            globalState.isBurstCallMode = false;
+            burstCallToggleBtn.classList.remove('active');
           }
         } else {
           player.loadVideoById(videoId, 0);
@@ -380,6 +447,59 @@
     
     if (globalState.playlist.length > 0 && (!player || !player.getVideoData())) {
         playRandomVideo();
+    }
+  }
+
+  // Info modal functions
+  function openInfoModal(videoId) {
+    currentInfoVideoId = videoId;
+    const db = firebase.firestore();
+    const docRef = db.collection('artifacts').doc(appId).collection('users').doc(firebase.auth().currentUser.uid).collection('notes').doc(videoId);
+    
+    docRef.get().then(docSnap => {
+        if (docSnap.exists) {
+            const data = docSnap.data();
+            uploaderInput.value = data.uploader || '';
+            infoTextarea.value = data.info || '';
+            commentTextarea.value = data.comment || '';
+        } else {
+            uploaderInput.value = '';
+            infoTextarea.value = '';
+            commentTextarea.value = '';
+        }
+    }).catch(e => {
+        console.error("Failed to load note:", e);
+        uploaderInput.value = '';
+        infoTextarea.value = 'Failed to load note.';
+        commentTextarea.value = '';
+    });
+    
+    infoModal.style.display = 'flex';
+  }
+
+  function closeInfoModal() {
+    infoModal.style.display = 'none';
+    currentInfoVideoId = null;
+  }
+
+  async function saveInfo() {
+    if (!currentInfoVideoId || !authed) return;
+    
+    const db = firebase.firestore();
+    const docRef = db.collection('artifacts').doc(appId).collection('users').doc(firebase.auth().currentUser.uid).collection('notes').doc(currentInfoVideoId);
+    
+    try {
+        await docRef.set({
+            uploader: uploaderInput.value.trim(),
+            info: infoTextarea.value.trim(),
+            comment: commentTextarea.value.trim(),
+            updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+        }, { merge: true });
+        showMessage("노트가 저장되었습니다!", 'ok');
+        closeInfoModal();
+    } catch(e) {
+        console.error("Failed to save note:", e);
+        showMessage("노트 저장 실패: " + e.message, 'error');
     }
   }
 
@@ -403,6 +523,8 @@
       }, { merge: true });
 
       showMessage("모든 사용자에게 버스트콜을 보냈습니다!", 'ok');
+      saveBurstCallState(); // 버스트콜 상태 저장
+
       // 현재 플레이어도 바로 재생
       player.loadVideoById(videoId, 0);
       player.playVideo();
@@ -572,20 +694,33 @@
     burstCallToggleBtn.addEventListener('click', () => {
         globalState.isBurstCallMode = !globalState.isBurstCallMode;
         burstCallToggleBtn.classList.toggle('active', globalState.isBurstCallMode);
-        burstCallToggleBtn.textContent = globalState.isBurstCallMode ? "버스트콜 모드 (활성화)" : "버스트콜 모드 (비활성화)";
-        showMessage(globalState.isBurstCallMode ? "버스트콜 모드가 활성화되었습니다. 이제 플레이리스트를 누르면 모든 사용자에게 전파됩니다." : "버스트콜 모드가 비활성화되었습니다. 이제 나만 음악을 들을 수 있습니다.");
+        burstCallToggleBtn.textContent = globalState.isBurstCallMode ? "버스트콜 (활성화)" : "버스트콜";
+        showMessage(globalState.isBurstCallMode ? "버스트콜 모드가 활성화되었습니다. 재생목록을 눌러 버스트콜을 시작하세요." : "버스트콜 모드가 비활성화되었습니다.");
     });
     
-    // Previous song click handler
-    prevSongTrigger.addEventListener('click', () => {
+    // Previous song button
+    prevSongBtn.addEventListener('click', () => {
         playPrev();
         showMessage("이전 곡으로 넘어갑니다.");
     });
 
-    // Next song click handler
-    nextSongTrigger.addEventListener('click', () => {
+    // Next song button
+    nextSongBtn.addEventListener('click', () => {
         playNext();
         showMessage("다음 곡으로 넘어갑니다.");
+    });
+    
+    // Info modal close button
+    modalCloseBtn.addEventListener('click', closeInfoModal);
+    
+    // Save info button
+    saveInfoBtn.addEventListener('click', saveInfo);
+
+    // Close modal when clicking outside
+    window.addEventListener('click', (event) => {
+      if (event.target === infoModal) {
+        closeInfoModal();
+      }
     });
   }
 
