@@ -24,17 +24,13 @@
     .item:last-child { border-bottom: none; }
     .item .delete-btn { background: none; border: none; color: #fc8181; cursor: pointer; font-size: 1.2em; line-height: 1; margin-left: 10px; opacity: 0.7; transition: opacity 0.2s; }
     .item .delete-btn:hover { opacity: 1; }
-    .item .info-icon { background: none; border: none; color: #63b3ed; cursor: pointer; font-size: 1em; margin-right: 10px; }
+    .item .info-icon { background: none; border: none; color: #63b3ed; cursor: pointer; font-size: 0.6em; margin-right: 5px; }
     .video-player { aspect-ratio: 16 / 9; width: 100%; max-width: 800px; margin: 8px auto; border-radius: 8px; overflow: hidden; position: relative; }
     .main-title { text-align: center; }
     .sub-title { text-align: center; font-size: 0.9em; margin-top: -15px; color: #a0aec0; }
     .message-box { display: none; background: #2d3748; color: #fff; padding: 12px; border-radius: 8px; text-align: center; position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000; }
     #player { height: 100%; width: 100%; }
-    .player-controls { display: flex; justify-content: space-between; align-items: center; position: absolute; top: 50%; width: 100%; transform: translateY(-50%); }
-    .player-controls button { background: rgba(0,0,0,0.5); border: none; color: white; font-size: 2rem; padding: 10px; cursor: pointer; opacity: 0.7; transition: opacity 0.2s; }
-    .player-controls button:hover { opacity: 1; }
-    .player-controls button.prev { border-radius: 0 10px 10px 0; }
-    .player-controls button.next { border-radius: 10px 0 0 10px; }
+    .player-controls { display: none; } /* 유튜브 화면 위에 있는 버튼을 숨김 */
     
     /* Info modal */
     .modal { display: none; position: fixed; z-index: 1001; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.4); justify-content: center; align-items: center; }
@@ -46,6 +42,13 @@
     .modal-content .close-btn { color: #aaa; float: right; font-size: 28px; font-weight: bold; }
     .modal-content .close-btn:hover, .modal-content .close-btn:focus { color: #fff; text-decoration: none; cursor: pointer; }
     .modal-content .save-btn { background: #38b2ac; color: #fff; border: 0; border-radius: 999px; padding: .6rem 1rem; margin-top: 10px; cursor: pointer; }
+
+    /* Custom Confirmation Modal */
+    .confirm-modal { display: none; position: fixed; z-index: 1002; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.4); justify-content: center; align-items: center; }
+    .confirm-modal-content { background-color: #222; padding: 20px; border: 1px solid #444; width: 80%; max-width: 350px; border-radius: 10px; text-align: center; }
+    .confirm-modal-content p { margin: 0 0 20px 0; }
+    .confirm-modal-buttons { display: flex; justify-content: space-around; }
+    .confirm-modal-buttons .btn { min-width: 100px; }
 
     /* Current Song Info Display */
     #currentSongNotes {
@@ -113,6 +116,35 @@
             transform: scale(1);
         }
     }
+    /* New styles for one-line song info and buttons */
+    .song-info-container {
+      display: flex;
+      align-items: center;
+      justify-content: center; /* Center horizontally */
+      margin-top: 10px;
+      gap: 10px;
+      font-size: 1.2em;
+      font-weight: bold;
+      text-align: center; /* For the text inside */
+    }
+    .song-info-text {
+      flex: 1;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: calc(100% - 120px); /* Adjust based on button width */
+    }
+    /* New style for the info button */
+    .current-info-btn {
+      background: none;
+      border: none;
+      color: #63b3ed;
+      cursor: pointer;
+      /* 아이콘 크기 절반으로 줄임 */
+      font-size: 0.8em;
+      margin-right: 5px;
+      padding: 0;
+    }
   </style>
   <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
@@ -142,8 +174,12 @@
       </div>
     </div>
     
-    <div id="currentSongInfo" class="text-center" style="margin-top: 10px;">
-      <span class="muted">현재 재생 중인 곡이 없습니다.</span>
+    <div class="song-info-container">
+      <button id="prev-song-btn-inline" class="btn">&lt;</button>
+      <div id="currentSongInfo" class="song-info-text">
+        <span class="muted">현재 재생 중인 곡이 없습니다.</span>
+      </div>
+      <button id="next-song-btn-inline" class="btn">&gt;</button>
     </div>
 
     <div id="currentSongNotes">
@@ -203,6 +239,17 @@
   </div>
 </div>
 
+<!-- Custom Confirmation Modal -->
+<div id="confirmModal" class="confirm-modal">
+  <div class="confirm-modal-content">
+    <p>정말로 삭제하시겠습니까?</p>
+    <div class="confirm-modal-buttons">
+      <button id="confirmYes" class="btn">예</button>
+      <button id="confirmNo" class="btn btn-toggle">아니오</button>
+    </div>
+  </div>
+</div>
+
 <script>
   // --- IMPORTANT: YouTube API Key ---
   // This error occurs when the API key usage is exceeded or the key is invalid.
@@ -231,8 +278,8 @@
   const manualTitleInput = document.getElementById('manualTitle');
   const manualArtistInput = document.getElementById('manualArtist');
   const busterCallToggleBtn = document.getElementById('busterCallToggle');
-  const prevSongBtn = document.getElementById('prev-song-btn');
-  const nextSongBtn = document.getElementById('next-song-btn');
+  const prevSongBtn = document.getElementById('prev-song-btn-inline');
+  const nextSongBtn = document.getElementById('next-song-btn-inline');
   const currentSongInfoEl = document.getElementById('currentSongInfo');
   const currentSongNotesEl = document.getElementById('currentSongNotes');
   const busterCallOverlay = document.getElementById('buster-call-overlay');
@@ -249,6 +296,11 @@
   const saveInfoBtn = document.getElementById('saveInfoBtn');
   const modalCloseBtn = document.querySelector('.modal .close-btn');
   let currentInfoVideoId = null;
+
+  // Custom confirmation modal elements
+  const confirmModal = document.getElementById('confirmModal');
+  const confirmYesBtn = document.getElementById('confirmYes');
+  const confirmNoBtn = document.getElementById('confirmNo');
 
   // ----- state/guards -----
   const appId = 'default-app-id';
@@ -286,6 +338,21 @@
     setTimeout(() => {
       messageBox.style.display = 'none';
     }, 3000);
+  }
+
+  function showConfirm(message, onConfirm) {
+    document.querySelector('#confirmModal p').textContent = message;
+    confirmModal.style.display = 'flex';
+    return new Promise((resolve) => {
+      confirmYesBtn.onclick = () => {
+        confirmModal.style.display = 'none';
+        resolve(true);
+      };
+      confirmNoBtn.onclick = () => {
+        confirmModal.style.display = 'none';
+        resolve(false);
+      };
+    });
   }
 
   // ----- Firebase initialization + anonymous login + diagnostics -----
@@ -563,13 +630,16 @@
       const deleteBtn = document.createElement('button');
       deleteBtn.className = 'delete-btn';
       deleteBtn.innerHTML = '&#x2715;';
-      deleteBtn.addEventListener('click', (e) => {
+      deleteBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        const newPlaylist = [...globalState.playlist];
-        const itemIndex = newPlaylist.findIndex(song => song.videoId === item.videoId);
-        if (itemIndex > -1) {
-            newPlaylist.splice(itemIndex, 1);
-            updatePlaylist(newPlaylist);
+        const shouldDelete = await showConfirm("정말로 삭제하시겠습니까?");
+        if (shouldDelete) {
+            const newPlaylist = [...globalState.playlist];
+            const itemIndex = newPlaylist.findIndex(song => song.videoId === item.videoId);
+            if (itemIndex > -1) {
+                newPlaylist.splice(itemIndex, 1);
+                updatePlaylist(newPlaylist);
+            }
         }
       });
       
@@ -630,7 +700,9 @@
       const playlistToRender = globalState.isShuffled ? globalState.shuffledPlaylist : globalState.playlist;
       const songToDisplay = playlistToRender[globalState.currentPlayingIndex];
       if (songToDisplay) {
-          currentSongInfoEl.innerHTML = `<span style="font-size: 1.2em; font-weight: bold;">${songToDisplay.title}</span><br><span class="muted">${songToDisplay.artist}</span>`;
+          const infoButton = `<button class="current-info-btn" onclick="openInfoModal('${songToDisplay.videoId}')">&#x24D8;</button>`;
+          const songText = `<span style="font-weight: bold;">${songToDisplay.title}</span><span class="muted" style="margin-left: 5px;"> - ${songToDisplay.artist}</span>`;
+          currentSongInfoEl.innerHTML = infoButton + songText;
           renderCurrentSongNotes();
       } else {
           currentSongInfoEl.innerHTML = '<span class="muted">현재 재생 중인 곡이 없습니다.</span>';
@@ -1001,6 +1073,9 @@
       }
     });
   }
+  
+  // Expose the function to the global scope for the button to work
+  window.openInfoModal = openInfoModal;
 
   window.onload = function() {
     boot();
