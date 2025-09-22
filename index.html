@@ -803,12 +803,13 @@
     const newArtist = artistInput.value.trim();
     
     // 1. Update the song title and artist in the main playlist
-    const songIndex = globalState.playlist.findIndex(item => item.videoId === currentInfoVideoId);
-    if (songIndex !== -1 && (globalState.playlist[songIndex].title !== newTitle || globalState.playlist[songIndex].artist !== newArtist)) {
-      const newPlaylist = [...globalState.playlist];
-      newPlaylist[songIndex].title = newTitle;
-      newPlaylist[songIndex].artist = newArtist;
-      updatePlaylist(newPlaylist);
+    const newPlaylist = [...globalState.playlist];
+    const songIndex = newPlaylist.findIndex(item => item.videoId === currentInfoVideoId);
+    
+    if (songIndex !== -1) {
+        newPlaylist[songIndex].title = newTitle;
+        newPlaylist[songIndex].artist = newArtist;
+        updatePlaylist(newPlaylist);
     }
     
     // 2. Save private notes
