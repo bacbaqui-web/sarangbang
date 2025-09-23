@@ -347,6 +347,12 @@
         const shuffledOld = [...oldSongs].sort(() => Math.random() - 0.5);
         globalState.shuffledPlaylist = [...newSongs, ...shuffledOld];
       } else {
+        // 최신순으로 정렬
+        globalState.playlist.sort((a,b) => {
+            const timeA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : a.createdAt?.getTime();
+            const timeB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : b.createdAt?.getTime();
+            return timeB - timeA;
+        });
         globalState.shuffledPlaylist = [];
       }
 
@@ -389,13 +395,11 @@
 
   function getVisibleList() {
     if (globalState.isShuffled) return globalState.shuffledPlaylist;
-    return [...globalState.playlist].sort((a, b) => {
-      const an = isNew(a), bn = isNew(b);
-      if (an && !bn) return -1;
-      if (!an && bn) return 1;
-      const A = (a.artist || '').toLowerCase();
-      const B = (b.artist || '').toLowerCase();
-      return A < B ? -1 : A > B ? 1 : 0;
+    // 최근 추가된 순으로 정렬
+    return [...globalState.playlist].sort((a,b) => {
+        const timeA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : a.createdAt?.getTime();
+        const timeB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : b.createdAt?.getTime();
+        return timeB - timeA;
     });
   }
 
