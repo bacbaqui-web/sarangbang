@@ -145,6 +145,17 @@
       margin-right: 5px;
       padding: 0;
     }
+    .new-tag {
+        background-color: #f6ad55;
+        color: #fff;
+        font-size: 0.7em;
+        font-weight: bold;
+        padding: 2px 6px;
+        border-radius: 999px;
+        margin-left: 8px;
+        vertical-align: middle;
+        text-transform: uppercase;
+    }
   </style>
   <!-- Firebase SDK -->
   <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
@@ -609,6 +620,9 @@
       return;
     }
     
+    const now = new Date().getTime();
+    const oneDayInMs = 24 * 60 * 60 * 1000;
+
     playlistToRender.forEach((item, index) => {
       const div = document.createElement('div');
       div.className = 'item';
@@ -627,6 +641,14 @@
       titleSpan.className = 'song-details';
       titleSpan.textContent = `${item.artist} - ${item.title}`;
       
+      // Check if the song is "new"
+      if (item.createdAt && (now - item.createdAt.toMillis()) < oneDayInMs) {
+          const newTag = document.createElement('span');
+          newTag.className = 'new-tag';
+          newTag.textContent = 'new';
+          titleSpan.prepend(newTag, ' ');
+      }
+
       const deleteBtn = document.createElement('button');
       deleteBtn.className = 'delete-btn';
       deleteBtn.innerHTML = '&#x2715;';
@@ -976,7 +998,8 @@
         const newPlaylist = [...globalState.playlist, {
           title: title,
           artist: artist,
-          videoId: videoId
+          videoId: videoId,
+          createdAt: new Date()
         }];
         updatePlaylist(newPlaylist);
         urlInput.value = '';
@@ -1002,7 +1025,8 @@
         const newPlaylist = [...globalState.playlist, {
           title: videoDetails.title,
           artist: videoDetails.channelTitle,
-          videoId: videoId
+          videoId: videoId,
+          createdAt: new Date()
         }];
         updatePlaylist(newPlaylist);
         urlInput.value = '';
