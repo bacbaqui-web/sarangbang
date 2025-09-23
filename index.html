@@ -159,16 +159,13 @@
 </div>
 
 <script>
+  // Canvas에서 제공하는 Firebase 설정과 앱 ID를 사용합니다.
+  const __firebase_config = '{"apiKey":"AIzaSyDz6xGJNKXinG5rREjdrPz7toIYGZXzilU","authDomain":"sarangbangmusicplaylist.firebaseapp.com","projectId":"sarangbangmusicplaylist","storageBucket":"sarangbangmusicplaylist.appspot.com","messagingSenderId":"193412502606","appId":"1:193412502606:web:0f7f9ddbef1ee6711d1ff","measurementId":"G-L14GH3BHYD"}';
+  const __app_id = "default-app-id";
+  const __initial_auth_token = ""; // Canvas 환경에서 인증 토큰이 제공되면 여기에 값이 들어갑니다.
+
   const YOUTUBE_API_KEY = "AIzaSyB2GymrywkBYx4Mbt_xHNiYEV44MbfKY2w";
-  const firebaseConfig = {
-    apiKey: "AIzaSyDz6xGJNKXinG5rREjdrPz7toIYGZXzilU",
-    authDomain: "sarangbangmusicplaylist.firebaseapp.com",
-    projectId: "sarangbangmusicplaylist",
-    storageBucket: "sarangbangmusicplaylist.apppt.com",
-    messagingSenderId: "193412502606",
-    appId: "1:193412502606:web:0f7f9ddbef1ee6711d1ff",
-    measurementId: "G-L14GH3BHYD"
-  };
+  const firebaseConfig = JSON.parse(__firebase_config);
 
   const urlInput = document.getElementById('url');
   const addBtn = document.getElementById('add');
@@ -201,9 +198,8 @@
   const confirmYesBtn = document.getElementById('confirmYes');
   const confirmNoBtn = document.getElementById('confirmNo');
 
-  const appId = 'default-app-id';
+  const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
   const clientId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Math.random());
-  let userId = null;
   
   const globalState = {
     playlist: [],
@@ -223,6 +219,7 @@
   let player;
   let playerReady = false;
   let isManuallyAdding = false;
+  let db;
 
   function showMessage(message, type = 'info') {
     messageBox.textContent = message;
@@ -241,15 +238,27 @@
   }
 
   async function boot() {
-    try { firebase.initializeApp(firebaseConfig); } catch(e) { console.error(e); return; }
-    try { await firebase.auth().signInAnonymously(); authed = true; userId = firebase.auth().currentUser.uid; } catch(e){ console.error(e); return; }
-
-    const db = firebase.firestore();
-    try {
-      const pingRef = db.collection('artifacts').doc(appId).collection('public').doc('_ping');
-      await pingRef.set({ pong: true, by: clientId, at: new Date() }, { merge: true });
-    } catch(e){ console.error(e); }
-
+    try { 
+        firebase.initializeApp(firebaseConfig);
+        db = firebase.firestore();
+        firebase.firestore.setLogLevel('debug');
+    } catch(e) { 
+        console.error(e); 
+        return; 
+    }
+    try { 
+        const auth = firebase.auth();
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token !== null && __initial_auth_token !== "") {
+            await auth.signInWithCustomToken(__initial_auth_token);
+        } else {
+            await auth.signInAnonymously();
+        }
+        authed = true;
+    } catch(e){ 
+        console.error(e); 
+        return; 
+    }
+    
     startRealtime();
     wireUI();
   }
@@ -279,7 +288,6 @@
 
   function saveBusterCallState() {
     if (!authed) return;
-    const db = firebase.firestore();
     db.collection('artifacts').doc(appId).collection('public')
       .doc('data').collection('buster_call_state').doc('main_state')
       .set({ lastBusterCallTimestamp: firebase.firestore.FieldValue.serverTimestamp(), updatedBy: clientId }, { merge: true })
@@ -287,8 +295,7 @@
   }
 
   function startRealtime() {
-    const db = firebase.firestore();
-
+    // 버스터콜 상태 리스너
     const busterCallRef = db.collection('artifacts').doc(appId).collection('public')
       .doc('data').collection('buster_call_state').doc('main_state');
     busterCallRef.onSnapshot(snap => {
@@ -300,6 +307,7 @@
       }
     });
 
+    // 재생 상태 리스너
     const playbackRef = db.collection('artifacts').doc(appId).collection('public')
       .doc('data').collection('playback_state').doc('main_state');
     playbackRef.onSnapshot((snap) => {
@@ -314,6 +322,7 @@
       } catch(e){ console.error(e); }
     });
 
+    // 재생목록 리스너
     const playlistRef = db.collection('artifacts').doc(appId).collection('public')
       .doc('data').collection('playlist_state').doc('main_playlist');
     playlistRef.onSnapshot((snap) => {
@@ -347,7 +356,8 @@
       }
     });
 
-    const notesRef = db.collection('artifacts').doc(appId).collection('users').doc(userId).collection('notes');
+    // 노트 리스너 (모든 사용자가 볼 수 있도록 공개 컬렉션으로 변경)
+    const notesRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('notes');
     notesRef.onSnapshot(() => { renderCurrentSongNotes(); });
   }
 
@@ -362,7 +372,6 @@
     if (playlistSaveTimer) clearTimeout(playlistSaveTimer);
     playlistSaveTimer = setTimeout(async () => {
       try {
-        const db = firebase.firestore();
         const ref = db.collection('artifacts').doc(appId).collection('public')
           .doc('data').collection('playlist_state').doc('main_playlist');
         const validPlaylist = globalState.playlist.map(item => ({ ...item, createdAt: item.createdAt || new Date() }));
@@ -506,10 +515,9 @@
   async function renderCurrentSongNotes() {
     currentSongNotesEl.innerHTML = '<span class="muted">정보를 불러오는 중...</span>';
     const videoId = globalState.videoId;
-    if (!videoId || !userId) { currentSongNotesEl.innerHTML = '<span class="muted">작성된 정보가 없습니다.</span>'; return; }
+    if (!videoId || !authed) { currentSongNotesEl.innerHTML = '<span class="muted">작성된 정보가 없습니다.</span>'; return; }
 
-    const db = firebase.firestore();
-    const docRef = db.collection('artifacts').doc(appId).collection('users').doc(userId).collection('notes').doc(videoId);
+    const docRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('notes').doc(videoId);
     try {
       const docSnap = await docRef.get();
       if (docSnap.exists) {
@@ -553,8 +561,7 @@
       artistInput.value = songItem.artist;
     }
 
-    const db = firebase.firestore();
-    const docRef = db.collection('artifacts').doc(appId).collection('users').doc(userId).collection('notes').doc(videoId);
+    const docRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('notes').doc(videoId);
     docRef.get().then(docSnap => {
       if (docSnap.exists) {
         const data = docSnap.data();
@@ -589,8 +596,7 @@
       updatePlaylist(newPlaylist);
     }
     
-    const db = firebase.firestore();
-    const docRef = db.collection('artifacts').doc(appId).collection('users').doc(userId).collection('notes').doc(currentInfoVideoId);
+    const docRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('notes').doc(currentInfoVideoId);
     try {
       await docRef.set({
         uploader: uploaderInput.value.trim(),
@@ -609,7 +615,6 @@
   function busterCall(videoId) {
     if (!authed) { showMessage("로그인되지 않았습니다.", 'error'); return; }
     try {
-      const db = firebase.firestore();
       db.collection('artifacts').doc(appId).collection('public')
         .doc('data').collection('playback_state').doc('main_state')
         .set({ videoId, timestamp: 0, lastUpdatedBy: clientId, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
