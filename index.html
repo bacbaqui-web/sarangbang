@@ -14,6 +14,8 @@
     .btn:disabled { background: #4a5568; cursor: not-allowed; }
     .btn-toggle { background: #555; }
     .btn-toggle.active { background: #fc8181; }
+    .btn-sort { background-color: #f6ad55; color: #fff; }
+    .btn-sort.active { background-color: #ed8936; }
     .ok { color: #81e6d9; }
     .fail { color: #fc8181; }
     .muted { color: #a0aec0; }
@@ -25,12 +27,16 @@
     .item .delete-btn { background: none; border: none; color: #fc8181; cursor: pointer; font-size: 1.2em; line-height: 1; margin-left: 10px; opacity: 0.7; transition: opacity 0.2s; }
     .item .delete-btn:hover { opacity: 1; }
     .item .info-icon { background: none; border: none; color: #63b3ed; cursor: pointer; font-size: 1.2em; margin-right: 5px; }
+    .item .like-btn { background: none; border: none; color: #aaa; cursor: pointer; font-size: 1.2em; margin-right: 5px; }
+    .item .like-btn.liked { color: #f6e07a; }
+    .like-count { font-size: 0.9em; color: #a0aec0; margin-left: -5px; margin-right: 5px;}
     .video-player { aspect-ratio: 16 / 9; width: 100%; max-width: 800px; margin: 8px auto; border-radius: 8px; overflow: hidden; position: relative; }
     .main-title { text-align: center; }
     .sub-title { text-align: center; font-size: 0.9em; margin-top: -15px; color: #a0aec0; }
     .message-box { display: none; background: #2d3748; color: #fff; padding: 12px; border-radius: 8px; text-align: center; position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000; }
     #player { height: 100%; width: 100%; }
     .player-controls { display: none; }
+    .main-player-controls { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-top: 1px solid #444; }
     .modal { display: none; position: fixed; z-index: 1001; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.4); justify-content: center; align-items: center; }
     .modal-content { background-color: #222; padding: 20px; border: 1px solid #444; width: 80%; max-width: 500px; border-radius: 10px; position: relative; }
     .modal-content .modal-section { margin-bottom: 15px; }
@@ -101,6 +107,7 @@
       <input id="url" placeholder="유튜브 링크 또는 노래 제목을 입력"/>
       <button id="add" class="btn">추가</button>
       <button id="shuffleBtn" class="btn">셔플</button>
+      <button id="likeSortBtn" class="btn btn-sort">따봉 정렬</button>
       <button id="togglePlayerBtn" class="btn">화면 숨기기</button>
       <button id="busterCallToggle" class="btn btn-toggle">버스터콜</button>
     </div>
@@ -170,6 +177,7 @@
   const urlInput = document.getElementById('url');
   const addBtn = document.getElementById('add');
   const shuffleBtn = document.getElementById('shuffleBtn');
+  const likeSortBtn = document.getElementById('likeSortBtn');
   const listEl = document.getElementById('playlist');
   const messageBox = document.getElementById('message-box');
   const manualInputDiv = document.getElementById('manual-input');
@@ -199,12 +207,12 @@
   const confirmNoBtn = document.getElementById('confirmNo');
 
   const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-  const clientId = (crypto && crypto.randomUUID) ? crypto.randomUUID() : String(Math.random());
+  let userId = null;
   
   const globalState = {
     playlist: [],
-    shuffledPlaylist: [],
-    isShuffled: false,
+    songLikes: {},
+    sortMode: 'newest', // 'newest' | 'shuffled' | 'likes'
     videoId: '',
     timestamp: 0,
     lastUpdatedBy: null,
@@ -248,11 +256,10 @@
     }
     try { 
         const auth = firebase.auth();
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token !== null && __initial_auth_token !== "") {
-            await auth.signInWithCustomToken(__initial_auth_token);
-        } else {
-            await auth.signInAnonymously();
-        }
+        const userCredential = (typeof __initial_auth_token !== 'undefined' && __initial_auth_token !== null && __initial_auth_token !== "")
+          ? await auth.signInWithCustomToken(__initial_auth_token)
+          : await auth.signInAnonymously();
+        userId = userCredential.user.uid;
         authed = true;
     } catch(e){ 
         console.error(e); 
@@ -290,7 +297,7 @@
     if (!authed) return;
     db.collection('artifacts').doc(appId).collection('public')
       .doc('data').collection('buster_call_state').doc('main_state')
-      .set({ lastBusterCallTimestamp: firebase.firestore.FieldValue.serverTimestamp(), updatedBy: clientId }, { merge: true })
+      .set({ lastBusterCallTimestamp: firebase.firestore.FieldValue.serverTimestamp(), updatedBy: userId }, { merge: true })
       .catch(e => console.error(e));
   }
 
@@ -313,7 +320,7 @@
     playbackRef.onSnapshot((snap) => {
       if (!snap.exists) return;
       const state = snap.data() || {};
-      if (state.lastUpdatedBy === clientId) return;
+      if (state.lastUpdatedBy === userId) return;
       try {
         if (playerReady && state.videoId && globalState.videoId !== state.videoId) {
           player.loadVideoById(state.videoId);
@@ -328,34 +335,8 @@
     playlistRef.onSnapshot((snap) => {
       if (!snap.exists) { savePlaylistState(); return; }
       const playlistData = snap.data() || {};
-      const sortedPlaylist = Array.isArray(playlistData.playlist) ? playlistData.playlist.sort((a,b)=>{
-        const A=(a.artist||'').toLowerCase(), B=(b.artist||'').toLowerCase();
-        return A<B?-1:A>B?1:0;
-      }) : [];
+      const sortedPlaylist = Array.isArray(playlistData.playlist) ? playlistData.playlist : [];
       globalState.playlist = sortedPlaylist;
-
-      if (globalState.isShuffled) {
-        const now = Date.now(), day = 24*60*60*1000;
-        const newSongs = sortedPlaylist.filter(it => {
-          const t = it.createdAt?.toDate ? it.createdAt.toDate().getTime() : it.createdAt?.getTime?.();
-          return t && (now - t) < day;
-        });
-        const oldSongs = sortedPlaylist.filter(it => {
-          const t = it.createdAt?.toDate ? it.createdAt.toDate().getTime() : it.createdAt?.getTime?.();
-          return !(t && (now - t) < day);
-        });
-        const shuffledOld = [...oldSongs].sort(() => Math.random() - 0.5);
-        globalState.shuffledPlaylist = [...newSongs, ...shuffledOld];
-      } else {
-        // 최신순으로 정렬
-        globalState.playlist.sort((a,b) => {
-            const timeA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : a.createdAt?.getTime();
-            const timeB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : b.createdAt?.getTime();
-            return timeB - timeA;
-        });
-        globalState.shuffledPlaylist = [];
-      }
-
       renderList();
       if (player && player.getPlayerState() === YT.PlayerState.PLAYING) {
         updatePlayingSong(player.getVideoData().video_id);
@@ -365,6 +346,17 @@
     // 노트 리스너 (모든 사용자가 볼 수 있도록 공개 컬렉션으로 변경)
     const notesRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('notes');
     notesRef.onSnapshot(() => { renderCurrentSongNotes(); });
+
+    // 따봉(좋아요) 리스너
+    const likesRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('song_likes');
+    likesRef.onSnapshot(snapshot => {
+      const newLikes = {};
+      snapshot.docs.forEach(doc => {
+        newLikes[doc.id] = doc.data();
+      });
+      globalState.songLikes = newLikes;
+      renderList();
+    });
   }
 
   function updatePlaylist(newPlaylist) {
@@ -381,7 +373,7 @@
         const ref = db.collection('artifacts').doc(appId).collection('public')
           .doc('data').collection('playlist_state').doc('main_playlist');
         const validPlaylist = globalState.playlist.map(item => ({ ...item, createdAt: item.createdAt || new Date() }));
-        await ref.set({ playlist: validPlaylist, lastUpdatedBy: clientId, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        await ref.set({ playlist: validPlaylist, lastUpdatedBy: userId, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
       } catch (e) { console.error(e); }
     }, 300);
   }
@@ -394,13 +386,30 @@
   }
 
   function getVisibleList() {
-    if (globalState.isShuffled) return globalState.shuffledPlaylist;
-    // 최근 추가된 순으로 정렬
-    return [...globalState.playlist].sort((a,b) => {
-        const timeA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : a.createdAt?.getTime();
-        const timeB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : b.createdAt?.getTime();
-        return timeB - timeA;
-    });
+    const list = [...globalState.playlist]; // Create a copy
+    
+    // 따봉 정렬
+    if (globalState.sortMode === 'likes') {
+      list.sort((a, b) => {
+        const likesA = globalState.songLikes[a.videoId]?.likeCount || 0;
+        const likesB = globalState.songLikes[b.videoId]?.likeCount || 0;
+        return likesB - likesA; // 좋아요 수 내림차순
+      });
+    } else if (globalState.sortMode === 'shuffled') {
+      const now = Date.now(), day = 24*60*60*1000;
+      const newSongs = list.filter(item => isNew(item));
+      const oldSongs = list.filter(item => !isNew(item));
+      const shuffledOld = [...oldSongs].sort(() => Math.random() - 0.5);
+      return [...newSongs, ...shuffledOld];
+    } else { // 'newest'
+      list.sort((a,b) => {
+          const timeA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : a.createdAt?.getTime();
+          const timeB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : b.createdAt?.getTime();
+          return timeB - timeA;
+      });
+    }
+
+    return list;
   }
 
   /* ---------- 렌더 ---------- */
@@ -443,6 +452,25 @@
         titleSpan.prepend(newTag, ' ');
       }
 
+      // 좋아요 버튼 및 카운트
+      const likeWrapper = document.createElement('div');
+      const likeBtn = document.createElement('button');
+      const likeCount = globalState.songLikes[item.videoId]?.likeCount || 0;
+      const hasLiked = globalState.songLikes[item.videoId]?.likedBy?.[userId];
+      likeBtn.className = `like-btn${hasLiked ? ' liked' : ''}`;
+      likeBtn.innerHTML = '👍';
+      // 좋아요 취소 기능 추가에 따라 버튼 비활성화 로직 제거
+      likeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        handleLike(item.videoId);
+      });
+      const countSpan = document.createElement('span');
+      countSpan.className = 'like-count';
+      countSpan.textContent = likeCount;
+
+      likeWrapper.appendChild(likeBtn);
+      likeWrapper.appendChild(countSpan);
+
       const deleteBtn = document.createElement('button');
       deleteBtn.className = 'delete-btn';
       deleteBtn.innerHTML = '&#x2715;';
@@ -456,6 +484,7 @@
       });
       
       div.appendChild(songDetails);
+      div.appendChild(likeWrapper);
       div.appendChild(deleteBtn);
       
       div.addEventListener('click', () => {
@@ -487,6 +516,42 @@
     renderCurrentSongInfo();
   }
 
+  async function handleLike(videoId) {
+    if (!userId) { showMessage("로그인되지 않았습니다. 좋아요를 누를 수 없습니다.", 'error'); return; }
+    const docRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('song_likes').doc(videoId);
+    
+    try {
+      await db.runTransaction(async (transaction) => {
+        const doc = await transaction.get(docRef);
+        let likeCount = 0;
+        let likedBy = {};
+        
+        if (doc.exists) {
+          likeCount = doc.data().likeCount || 0;
+          likedBy = doc.data().likedBy || {};
+        }
+
+        const hasLiked = likedBy?.[userId];
+        if (hasLiked) {
+            // 좋아요 취소
+            likeCount = Math.max(0, likeCount - 1);
+            delete likedBy[userId];
+            showMessage("좋아요가 취소되었습니다.");
+        } else {
+            // 좋아요 추가
+            likeCount++;
+            likedBy[userId] = true;
+            showMessage("좋아요를 눌렀습니다!", 'ok');
+        }
+
+        transaction.set(docRef, { likeCount, likedBy, lastUpdated: firebase.firestore.FieldValue.serverTimestamp() });
+      });
+    } catch (e) {
+      console.error(e);
+      showMessage("좋아요 처리에 실패했습니다. " + e.message, 'error');
+    }
+  }
+
   function updatePlayingSong(videoId) {
     const visible = getVisibleList();
     const idx = visible.findIndex(item => item.videoId === videoId);
@@ -506,7 +571,8 @@
     const visible = getVisibleList();
     const songToDisplay = visible[globalState.currentPlayingIndex];
     if (songToDisplay) {
-      const infoButton = `<button class="current-info-btn" onclick="openInfoModal('${songToDisplay.videoId}')">&#x24D8;</button>`;
+      const infoButton = `<button class="current-info-btn" onclick="openInfoModal('${songToDisplay.videoId}')">&#x24D8;
+</button>`;
       const songText = `<span style="font-weight: bold;">${songToDisplay.title}</span><span class="muted" style="margin-left: 5px;"> - ${songToDisplay.artist}</span>`;
       currentSongInfoEl.innerHTML = infoButton + songText;
       renderCurrentSongNotes();
@@ -621,7 +687,7 @@
     try {
       db.collection('artifacts').doc(appId).collection('public')
         .doc('data').collection('playback_state').doc('main_state')
-        .set({ videoId, timestamp: 0, lastUpdatedBy: clientId, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
+        .set({ videoId, timestamp: 0, lastUpdatedBy: userId, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
 
       showMessage("모든 사용자에게 버스터콜을 보냈습니다!", 'ok');
       saveBusterCallState();
@@ -658,7 +724,6 @@
     throw new Error("Failed to find video information.");
   }
   
-  // 새로 추가된 함수: 유튜브 검색을 통해 노래를 추가
   async function searchYouTubeAndAddSong(query) {
     if (!query) {
         showMessage("검색어를 입력해주세요.", 'error');
@@ -784,28 +849,23 @@
     });
     
     shuffleBtn.addEventListener('click', () => {
-      if (globalState.isShuffled) {
-        globalState.isShuffled = false;
-        globalState.shuffledPlaylist = [];
-        shuffleBtn.textContent = '셔플';
-        showMessage("재생목록 정렬");
-      } else {
-        if (globalState.playlist.length === 0) { showMessage("재생목록이 비어있습니다. 먼저 곡을 추가해주세요.", 'info'); return; }
-        const now = Date.now(), day = 24*60*60*1000;
-        const newSongs = globalState.playlist.filter(item => {
-          const t = item.createdAt?.toDate ? item.createdAt.toDate().getTime() : item.createdAt?.getTime?.();
-          return t && (now - t) < day;
-        });
-        const oldSongs = globalState.playlist.filter(item => {
-          const t = item.createdAt?.toDate ? item.createdAt.toDate().getTime() : item.createdAt?.getTime?.();
-          return !(t && (now - t) < day);
-        });
-        const shuffledOld = [...oldSongs].sort(() => Math.random() - 0.5);
-        globalState.isShuffled = true;
-        globalState.shuffledPlaylist = [...newSongs, ...shuffledOld];
-        shuffleBtn.textContent = '정렬';
-        showMessage("재생목록 셔플 (new 우선)");
-      }
+      globalState.sortMode = (globalState.sortMode === 'shuffled') ? 'newest' : 'shuffled';
+      shuffleBtn.classList.toggle('active', globalState.sortMode === 'shuffled');
+      likeSortBtn.classList.remove('active');
+      shuffleBtn.textContent = (globalState.sortMode === 'shuffled') ? '정렬' : '셔플';
+      likeSortBtn.textContent = '따봉 정렬';
+      showMessage(globalState.sortMode === 'shuffled' ? "재생목록 셔플 (new 우선)" : "최신순으로 정렬");
+      renderList();
+      playVideo(0);
+    });
+
+    likeSortBtn.addEventListener('click', () => {
+      globalState.sortMode = (globalState.sortMode === 'likes') ? 'newest' : 'likes';
+      likeSortBtn.classList.toggle('active', globalState.sortMode === 'likes');
+      shuffleBtn.classList.remove('active');
+      likeSortBtn.textContent = (globalState.sortMode === 'likes') ? '최신순 정렬' : '따봉 정렬';
+      shuffleBtn.textContent = '셔플';
+      showMessage(globalState.sortMode === 'likes' ? "따봉 많은 순으로 정렬" : "최신순으로 정렬");
       renderList();
       playVideo(0);
     });
