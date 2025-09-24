@@ -107,7 +107,7 @@
     <div class="row" style="margin-top:10px">
       <input id="url" placeholder="유튜브 링크 또는 노래 제목을 입력"/>
       <button id="add" class="btn">추가</button>
-      <button id="shuffleBtn" class="btn">셔플</button>
+      <button id="shuffleBtn" class="btn btn-toggle">셔플</button>
       <button id="likeSortBtn" class="btn btn-sort">따봉 정렬</button>
       <button id="togglePlayerBtn" class="btn">화면 숨기기</button>
       <button id="busterCallToggle" class="btn btn-toggle">버스터콜</button>
@@ -213,10 +213,12 @@
   
   const globalState = {
     playlist: [],
+    shuffledOrder: [], // 셔플 순서를 저장할 배열
     songLikes: {},
     notes: {}, // 올린 사람, 노트 정보 등을 저장
-    sortMode: 'newest', // 'newest' | 'shuffled' | 'likes' | 'uploader'
-    filterUploader: null, // 특정 올린 사람으로 필터링
+    isShuffleMode: false,
+    isLikeSortMode: false,
+    filterUploader: null,
     videoId: '',
     timestamp: 0,
     lastUpdatedBy: null,
@@ -375,6 +377,10 @@
       const playlistData = snap.data() || {};
       const sortedPlaylist = Array.isArray(playlistData.playlist) ? playlistData.playlist : [];
       globalState.playlist = sortedPlaylist;
+      // 재생목록이 업데이트될 때마다 셔플 순서도 다시 생성
+      if (globalState.isShuffleMode) {
+        generateShuffleOrder();
+      }
       renderList();
     });
 
@@ -425,44 +431,55 @@
   function isNew(item) {
     const t = item?.createdAt?.toDate ? item.createdAt.toDate().getTime() : item?.createdAt?.getTime?.();
     if (!t) return false;
-    return (Date.now() - t) < 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    const halfDay = 12 * 60 * 60 * 1000;
+    return (now - t) < halfDay;
   }
 
   function getVisibleList() {
     let list = [...globalState.playlist]; // Create a copy
     
+    // 기본 정렬: 추가된 시간 (내림차순)
+    list.sort((a,b) => {
+        const timeA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : a.createdAt?.getTime();
+        const timeB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : b.createdAt?.getTime();
+        return timeB - timeA;
+    });
+
     // 특정 올린 사람으로 필터링
     if (globalState.filterUploader) {
-        const filteredSongs = list.filter(item => globalState.notes[item.videoId]?.uploader === globalState.filterUploader);
-        const otherSongs = list.filter(item => globalState.notes[item.videoId]?.uploader !== globalState.filterUploader);
-        list = [...filteredSongs, ...otherSongs];
+      const filteredSongs = list.filter(item => globalState.notes[item.videoId]?.uploader === globalState.filterUploader);
+      const otherSongs = list.filter(item => globalState.notes[item.videoId]?.uploader !== globalState.filterUploader);
+      list = [...filteredSongs, ...otherSongs];
     }
     
     // 따봉 정렬
-    if (globalState.sortMode === 'likes') {
+    if (globalState.isLikeSortMode) {
       list.sort((a, b) => {
         const likesA = globalState.songLikes[a.videoId]?.likeCount || 0;
         const likesB = globalState.songLikes[b.videoId]?.likeCount || 0;
         return likesB - likesA; // 좋아요 수 내림차순
-      });
-    } else if (globalState.sortMode === 'shuffled') {
-      const newSongs = list.filter(item => isNew(item));
-      const oldSongs = list.filter(item => !isNew(item));
-      const shuffledOld = [...oldSongs].sort(() => Math.random() - 0.5);
-      return [...newSongs, ...shuffledOld];
-    } else { // 'newest'
-      list.sort((a,b) => {
-          const timeA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : a.createdAt?.getTime();
-          const timeB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : b.createdAt?.getTime();
-          return timeB - timeA;
       });
     }
 
     return list;
   }
   
+  // 셔플 순서 생성 (재생목록 섞지 않음)
+  function generateShuffleOrder() {
+    const visible = getVisibleList();
+    // New 태그는 우선순위를 갖지 않으므로, 전체 재생목록을 무작위로 섞습니다.
+    const shuffledList = visible.sort(() => Math.random() - 0.5);
+    globalState.shuffledOrder = shuffledList;
+  }
+
   // 올린 사람으로 필터링하는 함수
   function filterByUploader(uploaderName) {
+      globalState.isShuffleMode = false;
+      globalState.isLikeSortMode = false;
+      shuffleBtn.classList.remove('active');
+      likeSortBtn.classList.remove('active');
+
       if (globalState.filterUploader === uploaderName) {
           globalState.filterUploader = null; // 같은 사람을 다시 클릭하면 필터 해제
           showMessage("필터가 해제되었습니다.");
@@ -574,7 +591,10 @@
             busterCallToggleBtn.classList.remove('active');
           }
         } else {
-          playVideo(index); // 가시 리스트 기준 인덱스
+          // 클릭 시에는 항상 원래 순서대로 재생
+          const visibleList = getVisibleList();
+          const originalIndex = visibleList.findIndex(song => song.videoId === item.videoId);
+          playVideo(originalIndex);
           showMessage("해당 곡을 재생합니다.", 'info');
         }
       });
@@ -837,26 +857,42 @@
     if (index >= visible.length) index = 0;
     else if (index < 0) index = visible.length - 1;
 
-    const nextSong = visible[index];
-    if (nextSong && isYoutubeApiReady) {
+    let videoIdToPlay;
+    if (globalState.isShuffleMode) {
+      // 셔플 모드에서는 셔플 순서에서 가져옴
+      if (globalState.shuffledOrder.length > 0) {
+        videoIdToPlay = globalState.shuffledOrder[index].videoId;
+        // 현재 재생중인 곡 인덱스 업데이트
+        globalState.currentPlayingIndex = index;
+      } else {
+        // 셔플 순서가 없으면 기본 순서에서 재생
+        videoIdToPlay = visible[index].videoId;
+        globalState.currentPlayingIndex = index;
+      }
+    } else {
+      videoIdToPlay = visible[index].videoId;
+      globalState.currentPlayingIndex = index;
+    }
+    
+    if (videoIdToPlay && isYoutubeApiReady) {
       try {
-        player.loadVideoById(nextSong.videoId);
-        updatePlayingSong(nextSong.videoId);
+        player.loadVideoById(videoIdToPlay);
+        updatePlayingSong(videoIdToPlay);
       } catch (e) { console.error(e); }
     }
   }
 
   function playNext() {
-    const visible = getVisibleList();
-    if (!visible.length) return;
-    const nextIndex = (globalState.currentPlayingIndex + 1) % visible.length;
+    const listToPlay = globalState.isShuffleMode ? globalState.shuffledOrder : getVisibleList();
+    if (!listToPlay.length) return;
+    const nextIndex = (globalState.currentPlayingIndex + 1) % listToPlay.length;
     playVideo(nextIndex);
   }
 
   function playPrev() {
-    const visible = getVisibleList();
-    if (!visible.length) return;
-    const prevIndex = (globalState.currentPlayingIndex - 1 + visible.length) % visible.length;
+    const listToPlay = globalState.isShuffleMode ? globalState.shuffledOrder : getVisibleList();
+    if (!listToPlay.length) return;
+    const prevIndex = (globalState.currentPlayingIndex - 1 + listToPlay.length) % listToPlay.length;
     playVideo(prevIndex);
   }
 
@@ -916,25 +952,39 @@
     });
     
     shuffleBtn.addEventListener('click', () => {
-      globalState.sortMode = (globalState.sortMode === 'shuffled') ? 'newest' : 'shuffled';
-      globalState.filterUploader = null; // 필터 해제
-      shuffleBtn.classList.toggle('active', globalState.sortMode === 'shuffled');
+      globalState.isShuffleMode = !globalState.isShuffleMode;
+      globalState.isLikeSortMode = false;
+      globalState.filterUploader = null;
+      
+      shuffleBtn.classList.toggle('active', globalState.isShuffleMode);
       likeSortBtn.classList.remove('active');
-      shuffleBtn.textContent = (globalState.sortMode === 'shuffled') ? '정렬' : '셔플';
-      likeSortBtn.textContent = '따봉 정렬';
-      showMessage(globalState.sortMode === 'shuffled' ? "재생목록 셔플 (new 우선)" : "최신순으로 정렬", 'info');
-      renderList();
-      playVideo(0);
+      
+      if (globalState.isShuffleMode) {
+        generateShuffleOrder();
+        playVideo(0); // 셔플 순서의 첫 곡 재생
+        showMessage("셔플 모드가 활성화되었습니다.", 'info');
+      } else {
+        // 셔플 모드 해제 시 현재 재생 중인 곡의 원래 순서를 찾아 재생
+        const visibleList = getVisibleList();
+        const currentSong = listEl.querySelector('.item.active');
+        const videoId = currentSong?.dataset.videoId || globalState.videoId;
+        const originalIndex = visibleList.findIndex(song => song.videoId === videoId);
+        playVideo(originalIndex !== -1 ? originalIndex : 0);
+        showMessage("셔플 모드가 비활성화되었습니다. 정렬 순서대로 재생됩니다.", 'info');
+      }
     });
 
     likeSortBtn.addEventListener('click', () => {
-      globalState.sortMode = (globalState.sortMode === 'likes') ? 'newest' : 'likes';
-      globalState.filterUploader = null; // 필터 해제
-      likeSortBtn.classList.toggle('active', globalState.sortMode === 'likes');
+      globalState.isLikeSortMode = !globalState.isLikeSortMode;
+      globalState.isShuffleMode = false;
+      globalState.filterUploader = null;
+      
+      likeSortBtn.classList.toggle('active', globalState.isLikeSortMode);
       shuffleBtn.classList.remove('active');
-      likeSortBtn.textContent = (globalState.sortMode === 'likes') ? '최신순 정렬' : '따봉 정렬';
-      shuffleBtn.textContent = '셔플';
-      showMessage(globalState.sortMode === 'likes' ? "따봉 많은 순으로 정렬" : "최신순으로 정렬", 'info');
+
+      const message = globalState.isLikeSortMode ? "따봉 많은 순으로 정렬합니다." : "최신순으로 정렬합니다.";
+      showMessage(message, 'info');
+      
       renderList();
       playVideo(0);
     });
