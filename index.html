@@ -955,26 +955,27 @@
       globalState.isShuffleMode = !globalState.isShuffleMode;
       globalState.isLikeSortMode = false;
       globalState.filterUploader = null;
-      
+
       shuffleBtn.classList.toggle('active', globalState.isShuffleMode);
       likeSortBtn.classList.remove('active');
-      
+
       if (globalState.isShuffleMode) {
         generateShuffleOrder();
-        playVideo(0); // 셔플 순서의 첫 곡 재생
-        showMessage("셔플 모드가 활성화되었습니다.", 'info');
+        showMessage("셔플 모드가 활성화되었습니다. 다음 곡부터 셔플 재생됩니다.", 'info');
       } else {
-        // 셔플 모드 해제 시 현재 재생 중인 곡의 원래 순서를 찾아 재생
         const visibleList = getVisibleList();
-        const currentSong = listEl.querySelector('.item.active');
-        const videoId = currentSong?.dataset.videoId || globalState.videoId;
-        const originalIndex = visibleList.findIndex(song => song.videoId === videoId);
-        playVideo(originalIndex !== -1 ? originalIndex : 0);
-        showMessage("셔플 모드가 비활성화되었습니다. 정렬 순서대로 재생됩니다.", 'info');
+        const currentVideoId = globalState.videoId;
+        const newIndex = visibleList.findIndex(song => song.videoId === currentVideoId);
+        if (newIndex !== -1) {
+          globalState.currentPlayingIndex = newIndex;
+        }
+        showMessage("셔플 모드가 비활성화되었습니다.", 'info');
       }
     });
 
     likeSortBtn.addEventListener('click', () => {
+      const currentVideoId = globalState.videoId;
+
       globalState.isLikeSortMode = !globalState.isLikeSortMode;
       globalState.isShuffleMode = false;
       globalState.filterUploader = null;
@@ -986,7 +987,12 @@
       showMessage(message, 'info');
       
       renderList();
-      playVideo(0);
+
+      const visibleList = getVisibleList();
+      const newIndex = visibleList.findIndex(song => song.videoId === currentVideoId);
+      if (newIndex !== -1) {
+        globalState.currentPlayingIndex = newIndex;
+      }
     });
 
     busterCallToggleBtn.addEventListener('click', () => {
