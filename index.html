@@ -375,13 +375,16 @@
     playlistRef.onSnapshot((snap) => {
       if (!snap.exists) { savePlaylistState(); return; }
       const playlistData = snap.data() || {};
-      const sortedPlaylist = Array.isArray(playlistData.playlist) ? playlistData.playlist : [];
-      globalState.playlist = sortedPlaylist;
-      // 재생목록이 업데이트될 때마다 셔플 순서도 다시 생성
-      if (globalState.isShuffleMode) {
-        generateShuffleOrder();
+      const receivedPlaylist = Array.isArray(playlistData.playlist) ? playlistData.playlist : [];
+      
+      // Prevent unnecessary re-renders if playlist hasn't changed
+      if (JSON.stringify(receivedPlaylist) !== JSON.stringify(globalState.playlist)) {
+        globalState.playlist = receivedPlaylist;
+        if (globalState.isShuffleMode) {
+          generateShuffleOrder();
+        }
+        renderList();
       }
-      renderList();
     });
 
     // 노트 리스너 (모든 사용자가 볼 수 있도록 공개 컬렉션으로 변경)
@@ -443,7 +446,7 @@
     list.sort((a,b) => {
         const timeA = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : a.createdAt?.getTime();
         const timeB = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : b.createdAt?.getTime();
-        return timeB - timeA;
+        return (timeB || 0) - (timeA || 0);
     });
 
     // 특정 올린 사람으로 필터링
@@ -659,17 +662,18 @@
   }
 
   function updatePlayingSong(videoId) {
-    const visible = getVisibleList();
-    const idx = visible.findIndex(item => item.videoId === videoId);
+    const activeList = globalState.isShuffleMode ? globalState.shuffledOrder : getVisibleList();
+    const idx = activeList.findIndex(item => item.videoId === videoId);
+
     if (idx !== -1) {
       globalState.currentPlayingIndex = idx;
       globalState.videoId = videoId;
       renderCurrentSongInfo();
     } else {
-      globalState.currentPlayingIndex = -1;
-      globalState.videoId = '';
-      currentSongInfoEl.innerHTML = '<span class="muted">재생목록에 없는 곡입니다.</span>';
-      currentSongNotesEl.innerHTML = '';
+      // If the song is not in the active list (e.g., due to filtering), reset index but keep videoId
+      globalState.currentPlayingIndex = -1; 
+      globalState.videoId = videoId;
+      renderCurrentSongInfo();
     }
   }
 
@@ -971,17 +975,10 @@
       }
 
       // 현재 재생 중인 곡의 인덱스를 새로운 순서에 맞게 업데이트
-      const currentVideoId = globalState.videoId;
-      const activeList = globalState.isShuffleMode ? globalState.shuffledOrder : getVisibleList();
-      const newIndex = activeList.findIndex(song => song.videoId === currentVideoId);
-      if (newIndex !== -1) {
-          globalState.currentPlayingIndex = newIndex;
-      }
+      updatePlayingSong(globalState.videoId);
     });
 
     likeSortBtn.addEventListener('click', () => {
-      const currentVideoId = globalState.videoId; // 현재 곡 저장
-
       globalState.isLikeSortMode = !globalState.isLikeSortMode;
       likeSortBtn.classList.toggle('active', globalState.isLikeSortMode);
 
@@ -997,11 +994,7 @@
       renderList(); // UI만 다시 그림
 
       // 현재 재생 중인 곡의 인덱스를 새로운 순서에 맞게 업데이트
-      const visibleList = getVisibleList();
-      const newIndex = visibleList.findIndex(song => song.videoId === currentVideoId);
-      if (newIndex !== -1) {
-        globalState.currentPlayingIndex = newIndex;
-      }
+      updatePlayingSong(globalState.videoId);
     });
 
     busterCallToggleBtn.addEventListener('click', () => {
@@ -1026,6 +1019,4 @@
 </script>
 </body>
 </html>
-
-
 
