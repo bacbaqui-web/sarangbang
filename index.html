@@ -14,8 +14,8 @@
     .btn:disabled { background: #4a5568; cursor: not-allowed; }
     .btn-toggle { background: #555; }
     .btn-toggle.active { background: #fc8181; }
-    .btn-sort { background-color: #f6ad55; color: #fff; }
-    .btn-sort.active { background-color: #ed8936; }
+    .btn-sort { background-color: #555; color: #fff; }
+    .btn-sort.active { background-color: #f6ad55; }
     .ok { color: #81e6d9; }
     .fail { color: #fc8181; }
     .muted { color: #a0aec0; }
@@ -475,16 +475,15 @@
 
   // 올린 사람으로 필터링하는 함수
   function filterByUploader(uploaderName) {
-      globalState.isShuffleMode = false;
-      globalState.isLikeSortMode = false;
-      shuffleBtn.classList.remove('active');
-      likeSortBtn.classList.remove('active');
-
       if (globalState.filterUploader === uploaderName) {
           globalState.filterUploader = null; // 같은 사람을 다시 클릭하면 필터 해제
           showMessage("필터가 해제되었습니다.");
       } else {
           globalState.filterUploader = uploaderName;
+          globalState.isShuffleMode = false; // 필터링 시 다른 정렬 초기화
+          globalState.isLikeSortMode = false;
+          shuffleBtn.classList.remove('active');
+          likeSortBtn.classList.remove('active');
           showMessage(`${uploaderName}님이 올린 곡만 상단으로 정렬합니다.`);
       }
       renderList();
@@ -602,9 +601,20 @@
       listEl.appendChild(div);
     });
     
-    if (playlistToRender.length > 0 && globalState.currentPlayingIndex === -1) {
-      playVideo(0); 
+    // BUG FIX: Check if current song was deleted and play next one.
+    const currentSongIsInPlaylist = playlistToRender.some(item => item.videoId === globalState.videoId);
+    if (globalState.videoId && !currentSongIsInPlaylist && playlistToRender.length > 0) {
+        // The current song was likely deleted. Let's play the song that took its place.
+        let nextIndex = globalState.currentPlayingIndex;
+        if (nextIndex >= playlistToRender.length) {
+            nextIndex = playlistToRender.length - 1; // Adjust if the last song was deleted
+        }
+        playVideo(nextIndex);
+    } else if (playlistToRender.length > 0 && globalState.currentPlayingIndex === -1) {
+        // This handles the initial load when no song has been played yet.
+        playVideo(0); 
     }
+    
     renderCurrentSongInfo();
   }
 
@@ -661,10 +671,11 @@
 
   function renderCurrentSongInfo() {
     const visible = getVisibleList();
-    const songToDisplay = visible[globalState.currentPlayingIndex];
+    // Use the current videoId to find the song, as index can be unreliable during re-renders
+    const songToDisplay = visible.find(song => song.videoId === globalState.videoId);
+    
     if (songToDisplay) {
-      const infoButton = `<button class="current-info-btn" onclick="openInfoModal('${songToDisplay.videoId}')">&#x24D8;
-</button>`;
+      const infoButton = `<button class="current-info-btn" onclick="openInfoModal('${songToDisplay.videoId}')">&#x24D8;</button>`;
       const songText = `<span style="font-weight: bold;">${songToDisplay.title}</span><span class="muted" style="margin-left: 5px;"> - ${songToDisplay.artist}</span>`;
       currentSongInfoEl.innerHTML = infoButton + songText;
       renderCurrentSongNotes();
@@ -785,7 +796,14 @@
 
       player.loadVideoById(videoId);
       player.playVideo();
-      updatePlayingSong(videoId);
+      
+      // 버스터콜 시 재생 정보 즉시 업데이트
+      globalState.videoId = videoId;
+      const visibleList = getVisibleList();
+      const newIndex = visibleList.findIndex(s => s.videoId === videoId);
+      globalState.currentPlayingIndex = (newIndex !== -1) ? newIndex : 0;
+      renderCurrentSongInfo();
+
     } catch (e) {
       console.error(e);
       showMessage("버스터콜에 실패했습니다. " + e.message, 'error');
@@ -851,34 +869,18 @@
 
   /* ---------- 재생: 가시 리스트 기준 ---------- */
   function playVideo(index) {
-    const visible = getVisibleList();
-    if (visible.length === 0) return;
+    const listToPlayFrom = globalState.isShuffleMode ? globalState.shuffledOrder : getVisibleList();
+    if (listToPlayFrom.length === 0) return;
 
-    if (index >= visible.length) index = 0;
-    else if (index < 0) index = visible.length - 1;
+    let validIndex = index;
+    if (validIndex >= listToPlayFrom.length) validIndex = 0;
+    else if (validIndex < 0) validIndex = listToPlayFrom.length - 1;
 
-    let videoIdToPlay;
-    if (globalState.isShuffleMode) {
-      // 셔플 모드에서는 셔플 순서에서 가져옴
-      if (globalState.shuffledOrder.length > 0) {
-        videoIdToPlay = globalState.shuffledOrder[index].videoId;
-        // 현재 재생중인 곡 인덱스 업데이트
-        globalState.currentPlayingIndex = index;
-      } else {
-        // 셔플 순서가 없으면 기본 순서에서 재생
-        videoIdToPlay = visible[index].videoId;
-        globalState.currentPlayingIndex = index;
-      }
-    } else {
-      videoIdToPlay = visible[index].videoId;
-      globalState.currentPlayingIndex = index;
-    }
+    const songToPlay = listToPlayFrom[validIndex];
     
-    if (videoIdToPlay && isYoutubeApiReady) {
-      try {
-        player.loadVideoById(videoIdToPlay);
-        updatePlayingSong(videoIdToPlay);
-      } catch (e) { console.error(e); }
+    if (songToPlay && songToPlay.videoId && isYoutubeApiReady) {
+        player.loadVideoById(songToPlay.videoId);
+        updatePlayingSong(songToPlay.videoId);
     }
   }
 
@@ -953,41 +955,45 @@
     
     shuffleBtn.addEventListener('click', () => {
       globalState.isShuffleMode = !globalState.isShuffleMode;
-      globalState.isLikeSortMode = false;
-      globalState.filterUploader = null;
-
       shuffleBtn.classList.toggle('active', globalState.isShuffleMode);
-      likeSortBtn.classList.remove('active');
-
+      
+      // 셔플 모드 변경 시, 다른 정렬 옵션은 초기화
       if (globalState.isShuffleMode) {
-        generateShuffleOrder();
-        showMessage("셔플 모드가 활성화되었습니다. 다음 곡부터 셔플 재생됩니다.", 'info');
+          globalState.isLikeSortMode = false;
+          likeSortBtn.classList.remove('active');
+          generateShuffleOrder();
+          showMessage("셔플 모드가 활성화되었습니다. 다음 곡부터 셔플 재생됩니다.", 'info');
       } else {
-        const visibleList = getVisibleList();
-        const currentVideoId = globalState.videoId;
-        const newIndex = visibleList.findIndex(song => song.videoId === currentVideoId);
-        if (newIndex !== -1) {
+          showMessage("셔플 모드가 비활성화되었습니다.", 'info');
+      }
+
+      // 현재 재생 중인 곡의 인덱스를 새로운 순서에 맞게 업데이트
+      const currentVideoId = globalState.videoId;
+      const activeList = globalState.isShuffleMode ? globalState.shuffledOrder : getVisibleList();
+      const newIndex = activeList.findIndex(song => song.videoId === currentVideoId);
+      if (newIndex !== -1) {
           globalState.currentPlayingIndex = newIndex;
-        }
-        showMessage("셔플 모드가 비활성화되었습니다.", 'info');
       }
     });
 
     likeSortBtn.addEventListener('click', () => {
-      const currentVideoId = globalState.videoId;
+      const currentVideoId = globalState.videoId; // 현재 곡 저장
 
       globalState.isLikeSortMode = !globalState.isLikeSortMode;
-      globalState.isShuffleMode = false;
-      globalState.filterUploader = null;
-      
       likeSortBtn.classList.toggle('active', globalState.isLikeSortMode);
-      shuffleBtn.classList.remove('active');
 
+      // 따봉 정렬 시, 다른 정렬 옵션은 초기화
+      if (globalState.isLikeSortMode) {
+          globalState.isShuffleMode = false;
+          shuffleBtn.classList.remove('active');
+      }
+      
       const message = globalState.isLikeSortMode ? "따봉 많은 순으로 정렬합니다." : "최신순으로 정렬합니다.";
       showMessage(message, 'info');
       
-      renderList();
+      renderList(); // UI만 다시 그림
 
+      // 현재 재생 중인 곡의 인덱스를 새로운 순서에 맞게 업데이트
       const visibleList = getVisibleList();
       const newIndex = visibleList.findIndex(song => song.videoId === currentVideoId);
       if (newIndex !== -1) {
@@ -1017,3 +1023,5 @@
 </script>
 </body>
 </html>
+
+
