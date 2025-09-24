@@ -109,7 +109,7 @@
       <button id="add" class="btn">추가</button>
       <button id="shuffleBtn" class="btn btn-toggle">셔플</button>
       <button id="likeSortBtn" class="btn btn-sort">따봉 정렬</button>
-      <button id="togglePlayerBtn" class="btn">화면 숨기기</button>
+      <button id="togglePlayerBtn" class="btn btn-toggle">화면 숨기기</button>
       <button id="busterCallToggle" class="btn btn-toggle">버스터콜</button>
     </div>
     
@@ -590,11 +590,15 @@
             busterCallToggleBtn.classList.remove('active');
           }
         } else {
-          // 클릭 시에는 항상 원래 순서대로 재생
-          const visibleList = getVisibleList();
-          const originalIndex = visibleList.findIndex(song => song.videoId === item.videoId);
-          playVideo(originalIndex);
-          showMessage("해당 곡을 재생합니다.", 'info');
+          // BUG FIX: 셔플 모드에서도 특정 곡을 클릭하면 해당 곡 재생
+          const videoIdToPlay = item.videoId;
+          const activeList = globalState.isShuffleMode ? globalState.shuffledOrder : getVisibleList();
+          const songIndex = activeList.findIndex(song => song.videoId === videoIdToPlay);
+
+          if (songIndex !== -1) {
+              playVideo(songIndex);
+              showMessage("해당 곡을 재생합니다.", 'info');
+          }
         }
       });
       
@@ -900,13 +904,12 @@
 
   function togglePlayerVisibility() {
     globalState.isPlayerVisible = !globalState.isPlayerVisible;
+    togglePlayerBtn.classList.toggle('active', !globalState.isPlayerVisible);
     if (globalState.isPlayerVisible) {
       playerContainer.style.height = 'auto';
-      togglePlayerBtn.textContent = '화면 숨기기';
       playerContainer.style.opacity = '1';
     } else {
       playerContainer.style.height = '0';
-      togglePlayerBtn.textContent = '화면 보기';
       playerContainer.style.opacity = '0';
     }
   }
@@ -1023,5 +1026,6 @@
 </script>
 </body>
 </html>
+
 
 
