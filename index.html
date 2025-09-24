@@ -98,7 +98,7 @@
     </div>
 
     <div class="row" style="margin-top:10px">
-      <input id="url" placeholder="유튜브 링크 또는 ID를 붙여넣기"/>
+      <input id="url" placeholder="유튜브 링크 또는 노래 제목을 입력"/>
       <button id="add" class="btn">추가</button>
       <button id="shuffleBtn" class="btn">셔플</button>
       <button id="togglePlayerBtn" class="btn">화면 숨기기</button>
@@ -657,6 +657,44 @@
     }
     throw new Error("Failed to find video information.");
   }
+  
+  // 새로 추가된 함수: 유튜브 검색을 통해 노래를 추가
+  async function searchYouTubeAndAddSong(query) {
+    if (!query) {
+        showMessage("검색어를 입력해주세요.", 'error');
+        return;
+    }
+
+    const apiUrl = `https://www.googleapis.com/youtube/v3/search?part=snippet&q=${encodeURIComponent(query)}&type=video&maxResults=1&key=${YOUTUBE_API_KEY}`;
+    
+    try {
+      const response = await fetch(apiUrl);
+      if (!response.ok) throw new Error(`API Error: ${response.status} ${response.statusText}`);
+      const data = await response.json();
+
+      if (data.items && data.items.length > 0) {
+        const item = data.items[0];
+        const videoId = item.id.videoId;
+        const title = item.snippet.title;
+        const artist = item.snippet.channelTitle;
+
+        const newPlaylist = [...globalState.playlist, { title, artist, videoId, createdAt: new Date() }];
+        updatePlaylist(newPlaylist);
+        urlInput.value = '';
+        showMessage('검색 결과가 성공적으로 추가되었습니다.', 'ok');
+      } else {
+        throw new Error("검색 결과가 없습니다.");
+      }
+    } catch (e) {
+      console.error(e);
+      showMessage("검색에 실패했습니다: " + e.message + ". 수동으로 입력해주세요.", 'error');
+      isManuallyAdding = true;
+      manualInputDiv.style.display = 'block';
+      addBtn.textContent = '수동 추가';
+    } finally {
+      addBtn.disabled = false;
+    }
+  }
 
   /* ---------- 재생: 가시 리스트 기준 ---------- */
   function playVideo(index) {
@@ -705,44 +743,44 @@
 
   function wireUI() {
     addBtn.addEventListener('click', async () => {
+      const inputVal = urlInput.value.trim();
+      addBtn.textContent = '불러오는 중...';
+      addBtn.disabled = true;
+
       if (isManuallyAdding) {
-        const url = (urlInput.value || '').trim();
-        const videoId = getVideoId(url);
+        const videoId = getVideoId(inputVal);
         const title = manualTitleInput.value.trim();
         const artist = manualArtistInput.value.trim();
-        if (!videoId) { showMessage("유효한 유튜브 링크 또는 ID를 입력해주세요.", 'error'); return; }
-        if (!title || !artist) { showMessage("제목과 아티스트를 모두 입력해주세요.", 'error'); return; }
+        if (!videoId) { showMessage("유효한 유튜브 링크 또는 ID를 입력해주세요.", 'error'); addBtn.disabled=false; return; }
+        if (!title || !artist) { showMessage("제목과 아티스트를 모두 입력해주세요.", 'error'); addBtn.disabled=false; return; }
         const newPlaylist = [...globalState.playlist, { title, artist, videoId, createdAt: new Date() }];
         updatePlaylist(newPlaylist);
         urlInput.value = ''; manualTitleInput.value = ''; manualArtistInput.value = '';
         isManuallyAdding = false; manualInputDiv.style.display = 'none'; addBtn.textContent = '추가';
         showMessage('곡이 성공적으로 추가되었습니다.', 'ok');
-        return;
-      }
-      
-      const url = (urlInput.value || '').trim();
-      const videoId = getVideoId(url);
-      if (!videoId) { showMessage("유효한 유튜브 링크 또는 ID를 입력해주세요.", 'error'); return; }
-      addBtn.textContent = '불러오는 중...'; addBtn.disabled = true;
-
-      try {
-        const videoDetails = await fetchVideoDetails(videoId);
-        const newPlaylist = [...globalState.playlist, { title: videoDetails.title, artist: videoDetails.artist, videoId, createdAt: new Date() }];
-        updatePlaylist(newPlaylist);
-        urlInput.value = ''; manualInputDiv.style.display = 'none'; isManuallyAdding = false;
-        showMessage('곡이 성공적으로 추가되었습니다.', 'ok');
-      } catch (e) {
-        console.error(e);
-        if (e.message.includes('403')) {
-          showMessage("API 키 사용량 초과 또는 유효하지 않은 키입니다. 수동으로 제목과 아티스트를 입력해주세요.", 'error');
-          isManuallyAdding = true; manualInputDiv.style.display = 'block'; addBtn.textContent = '수동 추가';
+      } else {
+        const videoId = getVideoId(inputVal);
+        if (videoId) {
+          try {
+            const videoDetails = await fetchVideoDetails(videoId);
+            const newPlaylist = [...globalState.playlist, { title: videoDetails.title, artist: videoDetails.artist, videoId, createdAt: new Date() }];
+            updatePlaylist(newPlaylist);
+            urlInput.value = '';
+            showMessage('곡이 성공적으로 추가되었습니다.', 'ok');
+          } catch (e) {
+            console.error(e);
+            showMessage("동영상 정보를 가져오는 데 실패했습니다. 수동으로 입력해주세요.", 'error');
+            isManuallyAdding = true;
+            manualInputDiv.style.display = 'block';
+            addBtn.textContent = '수동 추가';
+          }
         } else {
-          showMessage("동영상 정보를 가져오는 데 실패했습니다: " + e.message, 'error');
+          // 유튜브 URL이 아닌 경우 검색 기능 실행
+          await searchYouTubeAndAddSong(inputVal);
         }
-      } finally {
-        addBtn.disabled = false;
-        if (!isManuallyAdding) addBtn.textContent = '추가';
       }
+      addBtn.disabled = false;
+      addBtn.textContent = '추가';
     });
     
     shuffleBtn.addEventListener('click', () => {
