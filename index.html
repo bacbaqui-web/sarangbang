@@ -37,7 +37,6 @@
     .message-box { display: none; background: #2d3748; color: #fff; padding: 12px; border-radius: 8px; text-align: center; position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 1000; }
     #player { height: 100%; width: 100%; }
     .player-controls { display: none; }
-    .main-player-controls { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-top: 1px solid #444; }
     .modal { display: none; position: fixed; z-index: 1001; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.4); justify-content: center; align-items: center; }
     .modal-content { background-color: #222; padding: 20px; border: 1px solid #444; width: 80%; max-width: 500px; border-radius: 10px; position: relative; }
     .modal-content .modal-section { margin-bottom: 15px; }
@@ -53,7 +52,6 @@
     .confirm-modal-buttons { display: flex; justify-content: space-around; }
     .confirm-modal-buttons .btn { min-width: 100px; }
     #currentSongNotes { border-top: 1px solid #444; margin-top: 10px; padding-top: 10px; }
-    #currentSongNotes h4 { margin: 0 0 5px 0; color: #63b3ed; }
     #currentSongNotes p { margin: 0 0 10px 0; color: #ccc; }
     .song-details { flex: 1; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; display: flex; align-items: center; }
     .buster-call-overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.8); color: #fff; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; font-weight: bold; text-shadow: 2px 2px 4px rgba(0,0,0,0.5); z-index: 999; transition: opacity 0.5s ease-in-out; opacity: 0; pointer-events: none; }
@@ -78,7 +76,7 @@
     <h1>사랑방 띵곡 플레이어</h1>
     <p class="sub-title">작가님들의 띵곡을 추천해주세요</p>
   </div>
-  
+
   <div class="card">
     <div id="player-container" class="video-player">
       <div id="player"></div>
@@ -91,7 +89,7 @@
         <p>모두집중!!!</p>
       </div>
     </div>
-    
+
     <div class="song-info-container">
       <button id="prev-song-btn-inline" class="btn">&lt;</button>
       <div id="currentSongInfo" class="song-info-text">
@@ -112,7 +110,7 @@
       <button id="togglePlayerBtn" class="btn btn-toggle">화면 숨기기</button>
       <button id="busterCallToggle" class="btn btn-toggle">버스터콜</button>
     </div>
-    
+
     <div id="manual-input" style="display:none; margin-top: 10px;">
       <div class="row">
         <input id="manualTitle" placeholder="제목을 수동으로 입력해주세요"/>
@@ -167,14 +165,15 @@
 </div>
 
 <script>
-  // Canvas 제공 값
+  // Canvas 제공 값(현 파일의 설정 유지)
   const __firebase_config = '{"apiKey":"AIzaSyDz6xGJNKXinG5rREjdrPz7toIYGZXzilU","authDomain":"sarangbangmusicplaylist.firebaseapp.com","projectId":"sarangbangmusicplaylist","storageBucket":"sarangbangmusicplaylist.appspot.com","messagingSenderId":"193412502606","appId":"1:193412502606:web:0f7f9ddbef1ee6711d1ff","measurementId":"G-L14GH3BHYD"}';
   const __app_id = "default-app-id";
   const __initial_auth_token = "";
-
-  const YOUTUBE_API_KEY = "AIzaSyB2GymrywkBYx4Mbt_xHNiYEV44MbfKY2w";
   const firebaseConfig = JSON.parse(__firebase_config);
 
+  const YOUTUBE_API_KEY = "AIzaSyB2GymrywkBYx4Mbt_xHNiYEV44MbfKY2w";
+
+  // DOM
   const urlInput = document.getElementById('url');
   const addBtn = document.getElementById('add');
   const shuffleBtn = document.getElementById('shuffleBtn');
@@ -202,8 +201,6 @@
   const commentTextarea = document.getElementById('commentTextarea');
   const saveInfoBtn = document.getElementById('saveInfoBtn');
   const modalCloseBtn = document.querySelector('.modal .close-btn');
-  let currentInfoVideoId = null;
-
   const confirmModal = document.getElementById('confirmModal');
   const confirmYesBtn = document.getElementById('confirmYes');
   const confirmNoBtn = document.getElementById('confirmNo');
@@ -213,7 +210,8 @@
 
   const globalState = {
     playlist: [],
-    shuffledOrder: [],
+    shuffledOrder: [],       // 기존 변수 유지
+    shuffleDeck: [],         // ⬅ 추가: 아직 안 나온 곡 videoId 큐
     songLikes: {},
     notes: {},
     isShuffleMode: false,
@@ -227,7 +225,7 @@
     lastBusterCallTimestamp: 0,
     busterCallCoolDown: 30 * 1000,
     isPlayerVisible: true,
-    // playback_state 폴백 메타
+    // 기존 파일의 폴백 메타 유지
     playbackTitle: null,
     playbackArtist: null,
   };
@@ -272,21 +270,15 @@
   }
 
   async function boot() {
-    try {
-      firebase.initializeApp(firebaseConfig);
-      db = firebase.firestore();
-      firebase.firestore.setLogLevel('debug');
-    } catch(e) { console.error(e); return; }
-
+    try { firebase.initializeApp(firebaseConfig); db = firebase.firestore(); firebase.firestore.setLogLevel('debug'); }
+    catch(e) { console.error(e); return; }
     try {
       const auth = firebase.auth();
-      const userCredential = (typeof __initial_auth_token !== 'undefined' && __initial_auth_token)
+      const cred = (typeof __initial_auth_token !== 'undefined' && __initial_auth_token)
         ? await auth.signInWithCustomToken(__initial_auth_token)
         : await auth.signInAnonymously();
-      userId = userCredential.user.uid;
-      authed = true;
+      userId = cred.user.uid; authed = true;
     } catch(e){ console.error(e); return; }
-
     startRealtime();
     wireUI();
   }
@@ -310,40 +302,34 @@
   }
 
   function startRealtime() {
-    // 버스터콜 오버레이 리스너
+    // 버스터콜 오버레이
     const busterCallRef = db.collection('artifacts').doc(appId).collection('public')
       .doc('data').collection('buster_call_state').doc('main_state');
     busterCallRef.onSnapshot(snap => {
       if (!snap.exists) return;
       const state = snap.data();
-      if (state && state.lastBusterCallTimestamp) {
+      if (state?.lastBusterCallTimestamp) {
         globalState.lastBusterCallTimestamp = state.lastBusterCallTimestamp.toMillis();
         checkBusterCallCooldown();
       }
-      if (state && state.showBusterCall) {
+      if (state?.showBusterCall) {
         busterCallOverlay.classList.add('show');
         const endMillis = state.endTimestamp.toMillis();
         const remainingTime = endMillis - Date.now();
         dingdongSound.play().catch(e => console.error("Sound play failed:", e));
-        if (remainingTime > 0) {
-          setTimeout(() => {
-            busterCallOverlay.classList.remove('show');
-            db.collection('artifacts').doc(appId).collection('public')
-              .doc('data').collection('buster_call_state').doc('main_state')
-              .set({ showBusterCall: false }, { merge: true });
-          }, remainingTime);
-        } else {
+        const hide = () => {
           busterCallOverlay.classList.remove('show');
           db.collection('artifacts').doc(appId).collection('public')
             .doc('data').collection('buster_call_state').doc('main_state')
             .set({ showBusterCall: false }, { merge: true });
-        }
+        };
+        if (remainingTime > 0) setTimeout(hide, remainingTime); else hide();
       } else {
         busterCallOverlay.classList.remove('show');
       }
     });
 
-    // 재생 상태 리스너: 제목/아티스트 폴백 저장
+    // 재생 상태 리스너: 제목/아티스트 폴백 유지
     const playbackRef = db.collection('artifacts').doc(appId).collection('public')
       .doc('data').collection('playback_state').doc('main_state');
     playbackRef.onSnapshot((snap) => {
@@ -351,7 +337,6 @@
       const state = snap.data() || {};
       if (state.lastUpdatedBy === userId) return;
 
-      // 폴백 메타 보관
       globalState.playbackTitle = state.title || null;
       globalState.playbackArtist = state.artist || null;
 
@@ -361,7 +346,6 @@
           player.seekTo(state.timestamp || 0, true);
           updatePlayingSong(state.videoId);
         } else {
-          // 리스트 렌더만 갱신하여 폴백 반영
           renderCurrentSongInfo();
         }
       } catch(e){ console.error(e); }
@@ -376,7 +360,7 @@
       const receivedPlaylist = Array.isArray(playlistData.playlist) ? playlistData.playlist : [];
       if (JSON.stringify(receivedPlaylist) !== JSON.stringify(globalState.playlist)) {
         globalState.playlist = receivedPlaylist;
-        if (globalState.isShuffleMode) generateShuffleOrder();
+        if (globalState.isShuffleMode) syncDeckWithVisible(); // ⬅ 덱 동기화
         renderList();
       }
     });
@@ -404,6 +388,7 @@
   function updatePlaylist(newPlaylist) {
     globalState.playlist = newPlaylist;
     savePlaylistState();
+    if (globalState.isShuffleMode) syncDeckWithVisible(); // ⬅ 덱 동기화
   }
 
   let playlistSaveTimer = null;
@@ -423,9 +408,7 @@
   function isNew(item) {
     const t = item?.createdAt?.toDate ? item.createdAt.toDate().getTime() : item?.createdAt?.getTime?.();
     if (!t) return false;
-    const now = Date.now();
-    const halfDay = 12 * 60 * 60 * 1000;
-    return (now - t) < halfDay;
+    return (Date.now() - t) < 12 * 60 * 60 * 1000;
   }
 
   function getVisibleList() {
@@ -436,9 +419,9 @@
       return (timeB || 0) - (timeA || 0);
     });
     if (globalState.filterUploader) {
-      const filteredSongs = list.filter(item => globalState.notes[item.videoId]?.uploader === globalState.filterUploader);
-      const otherSongs = list.filter(item => globalState.notes[item.videoId]?.uploader !== globalState.filterUploader);
-      list = [...filteredSongs, ...otherSongs];
+      const filtered = list.filter(item => globalState.notes[item.videoId]?.uploader === globalState.filterUploader);
+      const others = list.filter(item => globalState.notes[item.videoId]?.uploader !== globalState.filterUploader);
+      list = [...filtered, ...others];
     }
     if (globalState.isLikeSortMode) {
       list.sort((a, b) => {
@@ -450,11 +433,27 @@
     return list;
   }
 
-  function generateShuffleOrder() {
-    const visible = getVisibleList();
-    const shuffledList = visible.sort(() => Math.random() - 0.5);
-    globalState.shuffledOrder = shuffledList;
+  // ====== 셔플 중복 방지 전용 코드 시작 ======
+  function fyShuffle(arr){
+    const a=[...arr];
+    for(let i=a.length-1;i>0;i--){
+      const j=Math.floor(Math.random()*(i+1));
+      [a[i],a[j]]=[a[j],a[i]];
+    }
+    return a;
   }
+  function rebuildShuffleDeck(){
+    const visibleIds=getVisibleList().map(s=>s.videoId);
+    const base=visibleIds.filter(id=>id!==globalState.videoId);
+    globalState.shuffleDeck=fyShuffle(base);
+  }
+  function syncDeckWithVisible(){
+    const visibleIds=new Set(getVisibleList().map(s=>s.videoId));
+    globalState.shuffleDeck=globalState.shuffleDeck.filter(id=>visibleIds.has(id)&&id!==globalState.videoId);
+    const toAdd=[...visibleIds].filter(id=>id!==globalState.videoId && !globalState.shuffleDeck.includes(id));
+    if(toAdd.length) globalState.shuffleDeck.push(...fyShuffle(toAdd));
+  }
+  // ====== 셔플 중복 방지 전용 코드 끝 ======
 
   function filterByUploader(uploaderName) {
     if (globalState.filterUploader === uploaderName) {
@@ -474,7 +473,6 @@
   function renderList() {
     listEl.innerHTML = '';
     const playlistToRender = getVisibleList();
-
     if (!playlistToRender.length) {
       listEl.innerHTML = '<div class="muted">재생목록이 비어있습니다.</div>';
       renderCurrentSongInfo();
@@ -559,9 +557,8 @@
             busterCallToggleBtn.classList.remove('active');
           }
         } else {
-          const videoIdToPlay = item.videoId;
-          const activeList = globalState.isShuffleMode ? globalState.shuffledOrder : getVisibleList();
-          const songIndex = activeList.findIndex(song => song.videoId === videoIdToPlay);
+          const activeList = getVisibleList();
+          const songIndex = activeList.findIndex(song => song.videoId === item.videoId);
           if (songIndex !== -1) {
             playVideo(songIndex);
             showMessage("해당 곡을 재생합니다.", 'info');
@@ -602,15 +599,10 @@
   }
 
   function updatePlayingSong(videoId) {
-    const activeList = globalState.isShuffleMode ? globalState.shuffledOrder : getVisibleList();
+    const activeList = getVisibleList();
     const idx = activeList.findIndex(item => item.videoId === videoId);
-    if (idx !== -1) {
-      globalState.currentPlayingIndex = idx;
-      globalState.videoId = videoId;
-    } else {
-      globalState.currentPlayingIndex = -1;
-      globalState.videoId = videoId;
-    }
+    if (idx !== -1) { globalState.currentPlayingIndex = idx; globalState.videoId = videoId; }
+    else { globalState.currentPlayingIndex = -1; globalState.videoId = videoId; }
     renderCurrentSongInfo();
   }
 
@@ -622,9 +614,7 @@
       const infoButton = `<button class="current-info-btn" onclick="openInfoModal('${songToDisplay.videoId}')">&#x24D8;</button>`;
       const songText = `<span style="font-weight: bold;">${songToDisplay.title}</span><span class="muted" style="margin-left: 5px;"> - ${songToDisplay.artist}</span>`;
       currentSongInfoEl.innerHTML = infoButton + songText;
-      // 재생목록 정보가 있으니 폴백 메타는 무시
     } else if (globalState.videoId && (globalState.playbackTitle || globalState.playbackArtist)) {
-      // 플레이리스트에 없을 때 Firestore playback_state 폴백 사용
       const t = globalState.playbackTitle || '제목 미상';
       const a = globalState.playbackArtist || '아티스트 미상';
       const infoButton = `<button class="current-info-btn" onclick="openInfoModal('${globalState.videoId}')">&#x24D8;</button>`;
@@ -678,9 +668,9 @@
   }
 
   function openInfoModal(videoId) {
-    currentInfoVideoId = videoId;
     const songItem = globalState.playlist.find(item => item.videoId === videoId);
     if (songItem) { songTitleInput.value = songItem.title; artistInput.value = songItem.artist; }
+    else { songTitleInput.value = globalState.playbackTitle || ''; artistInput.value = globalState.playbackArtist || ''; }
     const docRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('notes').doc(videoId);
     docRef.get().then(docSnap => {
       if (docSnap.exists) {
@@ -693,10 +683,12 @@
       }
     }).catch(e => { console.error(e); uploaderInput.value = ''; infoTextarea.value = 'Failed to load note.'; commentTextarea.value = ''; });
     infoModal.style.display = 'flex';
+    window.currentInfoVideoId = videoId;
   }
-  function closeInfoModal() { infoModal.style.display = 'none'; currentInfoVideoId = null; }
+  function closeInfoModal() { infoModal.style.display = 'none'; window.currentInfoVideoId = null; }
 
   async function saveInfo() {
+    const currentInfoVideoId = window.currentInfoVideoId;
     if (!currentInfoVideoId || !authed) return;
     const newTitle = songTitleInput.value.trim();
     const newArtist = artistInput.value.trim();
@@ -707,6 +699,12 @@
       newPlaylist[songIndex].title = newTitle;
       newPlaylist[songIndex].artist = newArtist;
       updatePlaylist(newPlaylist);
+    } else {
+      if (globalState.videoId === currentInfoVideoId) {
+        globalState.playbackTitle = newTitle || globalState.playbackTitle;
+        globalState.playbackArtist = newArtist || globalState.playbackArtist;
+        renderCurrentSongInfo();
+      }
     }
 
     const docRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('notes').doc(currentInfoVideoId);
@@ -776,45 +774,57 @@
   }
 
   function playVideo(index) {
-    const listToPlayFrom = globalState.isShuffleMode ? globalState.shuffledOrder : getVisibleList();
-    if (listToPlayFrom.length === 0) return;
-    let validIndex = index;
-    if (validIndex >= listToPlayFrom.length) validIndex = 0;
-    else if (validIndex < 0) validIndex = listToPlayFrom.length - 1;
-    const songToPlay = listToPlayFrom[validIndex];
-    if (songToPlay && songToPlay.videoId && isYoutubeApiReady) {
-      player.loadVideoById(songToPlay.videoId);
-      updatePlayingSong(songToPlay.videoId);
-      // 재생 시 폴백 메타 갱신
-      globalState.playbackTitle = songToPlay.title;
-      globalState.playbackArtist = songToPlay.artist;
+    const list = getVisibleList();
+    if (!list.length) return;
+    let i = Math.max(0, Math.min(index, list.length - 1));
+    const song = list[i];
+    if (song && song.videoId && isYoutubeApiReady) {
+      player.loadVideoById(song.videoId);
+      updatePlayingSong(song.videoId);
+      // 폴백 메타 유지
+      globalState.playbackTitle = song.title;
+      globalState.playbackArtist = song.artist;
+      // 셔플 모드에서는 지금 재생한 곡을 덱에서 제거
+      if (globalState.isShuffleMode) {
+        globalState.shuffleDeck = globalState.shuffleDeck.filter(id => id !== song.videoId);
+      }
     }
   }
 
   function playNext() {
-    const listToPlay = globalState.isShuffleMode ? globalState.shuffledOrder : getVisibleList();
-    if (!listToPlay.length) return;
-    const nextIndex = (globalState.currentPlayingIndex + 1) % listToPlay.length;
-    playVideo(nextIndex);
+    if (globalState.isShuffleMode) {
+      if (globalState.shuffleDeck.length === 0) rebuildShuffleDeck();
+      const nextId = globalState.shuffleDeck.shift();
+      if (nextId) {
+        const meta = getVisibleList().find(s => s.videoId === nextId);
+        if (isYoutubeApiReady) player.loadVideoById(nextId);
+        if (meta){ globalState.playbackTitle=meta.title; globalState.playbackArtist=meta.artist; }
+        updatePlayingSong(nextId);
+        return;
+      }
+    }
+    const list = getVisibleList();
+    if (!list.length) return;
+    const idx = (globalState.currentPlayingIndex + 1) % list.length;
+    playVideo(idx);
   }
 
   function playPrev() {
-    const listToPlay = globalState.isShuffleMode ? globalState.shuffledOrder : getVisibleList();
-    if (!listToPlay.length) return;
-    const prevIndex = (globalState.currentPlayingIndex - 1 + listToPlay.length) % listToPlay.length;
-    playVideo(prevIndex);
+    if (globalState.isShuffleMode) {
+      showMessage("셔플 모드에서 이전 곡은 지원하지 않습니다.", 'error');
+      return;
+    }
+    const list = getVisibleList();
+    if (!list.length) return;
+    const idx = (globalState.currentPlayingIndex - 1 + list.length) % list.length;
+    playVideo(idx);
   }
 
   function togglePlayerVisibility() {
     globalState.isPlayerVisible = !globalState.isPlayerVisible;
     togglePlayerBtn.classList.toggle('active', !globalState.isPlayerVisible);
-    if (globalState.isPlayerVisible) {
-      playerContainer.style.height = 'auto';
-      playerContainer.style.opacity = '1';
-    } else {
-      playerContainer.style.height = '0';
-      playerContainer.style.opacity = '0';
-    }
+    if (globalState.isPlayerVisible) { playerContainer.style.height = 'auto'; playerContainer.style.opacity = '1'; }
+    else { playerContainer.style.height = '0'; playerContainer.style.opacity = '0'; }
   }
 
   function wireUI() {
@@ -827,8 +837,8 @@
         const videoId = getVideoId(inputVal);
         const title = manualTitleInput.value.trim();
         const artist = manualArtistInput.value.trim();
-        if (!videoId) { showMessage("유효한 유튜브 링크 또는 ID를 입력해주세요.", 'error'); addBtn.disabled=false; return; }
-        if (!title || !artist) { showMessage("제목과 아티스트를 모두 입력해주세요.", 'error'); addBtn.disabled=false; return; }
+        if (!videoId) { showMessage("유효한 유튜브 링크 또는 ID를 입력해주세요.", 'error'); addBtn.disabled=false; addBtn.textContent='추가'; return; }
+        if (!title || !artist) { showMessage("제목과 아티스트를 모두 입력해주세요.", 'error'); addBtn.disabled=false; addBtn.textContent='추가'; return; }
         const newPlaylist = [...globalState.playlist, { title, artist, videoId, createdAt: new Date() }];
         updatePlaylist(newPlaylist);
         urlInput.value = ''; manualTitleInput.value = ''; manualArtistInput.value = '';
@@ -864,8 +874,8 @@
       if (globalState.isShuffleMode) {
         globalState.isLikeSortMode = false;
         likeSortBtn.classList.remove('active');
-        generateShuffleOrder();
-        showMessage("셔플 모드가 활성화되었습니다. 다음 곡부터 셔플 재생됩니다.", 'info');
+        rebuildShuffleDeck(); // ⬅ 덱 생성
+        showMessage("셔플 모드: 나온 곡은 재등장하지 않습니다.", 'info');
       } else {
         showMessage("셔플 모드가 비활성화되었습니다.", 'info');
       }
@@ -898,15 +908,13 @@
 
     modalCloseBtn.addEventListener('click', closeInfoModal);
     saveInfoBtn.addEventListener('click', saveInfo);
-
     window.addEventListener('click', (event) => { if (event.target === infoModal) closeInfoModal(); });
   }
 
-  // 버스터콜: title/artist 함께 브로드캐스트
+  // 버스터콜: 현 파일의 제목/아티스트 전파 유지
   function busterCall(videoId) {
     if (!authed) { showMessage("로그인되지 않았습니다.", 'error'); return; }
     try {
-      // 재생목록에서 메타 찾기
       const inList = globalState.playlist.find(s => s.videoId === videoId);
       const title = inList?.title || globalState.playbackTitle || '';
       const artist = inList?.artist || globalState.playbackArtist || '';
@@ -916,13 +924,12 @@
         .set({
           videoId,
           timestamp: 0,
-          title,            // 추가
-          artist,           // 추가
+          title,
+          artist,
           lastUpdatedBy: userId,
           updatedAt: firebase.firestore.FieldValue.serverTimestamp()
         }, { merge: true });
 
-      // 로컬 폴백 메타도 갱신
       globalState.playbackTitle = title || null;
       globalState.playbackArtist = artist || null;
 
@@ -938,6 +945,11 @@
       const newIndex = visibleList.findIndex(s => s.videoId === videoId);
       globalState.currentPlayingIndex = (newIndex !== -1) ? newIndex : 0;
       renderCurrentSongInfo();
+
+      // 셔플 모드 시 덱에서 제거
+      if (globalState.isShuffleMode) {
+        globalState.shuffleDeck = globalState.shuffleDeck.filter(id => id !== videoId);
+      }
 
     } catch (e) {
       console.error(e);
