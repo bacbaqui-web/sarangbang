@@ -30,6 +30,7 @@
     .item .like-btn { background: none; border: none; color: #aaa; cursor: pointer; font-size: 1.2em; margin-right: 5px; }
     .item .like-btn.liked { color: #f6e07a; }
     .like-count { font-size: 0.9em; color: #a0aec0; margin-left: -5px; margin-right: 5px;}
+    .uploader-btn { background: none; border: none; color: #63b3ed; cursor: pointer; font-size: 0.9em; margin-right: 5px; padding: 0; }
     .video-player { aspect-ratio: 16 / 9; width: 100%; max-width: 800px; margin: 8px auto; border-radius: 8px; overflow: hidden; position: relative; }
     .main-title { text-align: center; }
     .sub-title { text-align: center; font-size: 0.9em; margin-top: -15px; color: #a0aec0; }
@@ -68,9 +69,9 @@
   <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore-compat.js"></script>
-  <script src="https://www.youtube.com/iframe_api"></script>
 </head>
 <body>
+<audio id="dingdong-sound" src="https://cdn.pixabay.com/audio/2021/08/04/audio_33e07f59d5.mp3" preload="auto" volume="0.3"></audio>
 <div id="message-box" class="message-box"></div>
 <div class="wrap">
   <div class="main-title">
@@ -191,6 +192,7 @@
   const busterCallOverlay = document.getElementById('buster-call-overlay');
   const togglePlayerBtn = document.getElementById('togglePlayerBtn');
   const playerContainer = document.getElementById('player-container');
+  const dingdongSound = document.getElementById('dingdong-sound');
 
   const infoModal = document.getElementById('infoModal');
   const songTitleInput = document.getElementById('songTitleInput');
@@ -212,7 +214,9 @@
   const globalState = {
     playlist: [],
     songLikes: {},
-    sortMode: 'newest', // 'newest' | 'shuffled' | 'likes'
+    notes: {}, // 올린 사람, 노트 정보 등을 저장
+    sortMode: 'newest', // 'newest' | 'shuffled' | 'likes' | 'uploader'
+    filterUploader: null, // 특정 올린 사람으로 필터링
     videoId: '',
     timestamp: 0,
     lastUpdatedBy: null,
@@ -220,14 +224,37 @@
     isBusterCallMode: false,
     lastBusterCallTimestamp: 0,
     busterCallCoolDown: 30 * 1000,
-    isPlayerVisible: true
+    isPlayerVisible: true,
   };
 
   let authed = false;
   let player;
-  let playerReady = false;
   let isManuallyAdding = false;
   let db;
+  let isYoutubeApiReady = false;
+
+  // 1. YouTube Iframe API 로드
+  const tag = document.createElement('script');
+  tag.src = "https://www.youtube.com/iframe_api";
+  const firstScriptTag = document.getElementsByTagName('script')[0];
+  firstScriptTag.parentNode.insertBefore(tag, firstScriptTag);
+
+  // 2. YouTube Iframe API가 로드되면 호출되는 함수
+  window.onYouTubeIframeAPIReady = function() {
+    isYoutubeApiReady = true;
+    player = new YT.Player('player', {
+      height: '100%',
+      width: '100%',
+      videoId: '',
+      playerVars: {
+        'autoplay': 1,
+        'controls': 1
+      },
+      events: {
+        'onStateChange': onPlayerStateChange
+      }
+    });
+  };
 
   function showMessage(message, type = 'info') {
     messageBox.textContent = message;
@@ -270,45 +297,21 @@
     wireUI();
   }
   
-  function onYouTubeIframeAPIReady() {
-    playerReady = true;
-    player = new YT.Player('player', {
-      height: '100%',
-      width: '100%',
-      videoId: '',
-      playerVars: { 'autoplay': 0, 'controls': 1, 'disablekb': 1, 'fs': 0, 'iv_load_policy': 3, 'modestbranding': 1, 'rel': 0, 'showinfo': 0 },
-      events: { 'onStateChange': onPlayerStateChange, 'onReady': onPlayerReady }
-    });
-  }
-  function onPlayerReady(){}
-
   function onPlayerStateChange(event) {
-    switch (event.data) {
-      case YT.PlayerState.ENDED: playNext(); break;
-      case YT.PlayerState.PLAYING:
-        const currentVideoId = player.getVideoData().video_id;
-        if (currentVideoId && currentVideoId.length === 11) updatePlayingSong(currentVideoId);
-        break;
-      case YT.PlayerState.PAUSED: globalState.timestamp = player.getCurrentTime(); break;
+    if (event.data === YT.PlayerState.ENDED) {
+      playNext();
     }
   }
 
-  function saveBusterCallState() {
+  function saveBusterCallState(videoId) {
     if (!authed) return;
+    const endTimestamp = firebase.firestore.Timestamp.fromMillis(Date.now() + 10000); // 10초 후 타임스탬프
     db.collection('artifacts').doc(appId).collection('public')
       .doc('data').collection('buster_call_state').doc('main_state')
-      .set({ lastBusterCallTimestamp: firebase.firestore.FieldValue.serverTimestamp(), updatedBy: userId }, { merge: true })
+      .set({ showBusterCall: true, lastBusterCallTimestamp: firebase.firestore.FieldValue.serverTimestamp(), updatedBy: userId, videoId, endTimestamp }, { merge: true })
       .catch(e => console.error(e));
   }
   
-  function saveAlertState(message, type) {
-    if (!authed) return;
-    db.collection('artifacts').doc(appId).collection('public')
-      .doc('data').collection('alert_state').doc('main_alert')
-      .set({ message, type, timestamp: firebase.firestore.FieldValue.serverTimestamp() })
-      .catch(e => console.error(e));
-  }
-
   function startRealtime() {
     // 버스터콜 상태 리스너
     const busterCallRef = db.collection('artifacts').doc(appId).collection('public')
@@ -320,6 +323,33 @@
         globalState.lastBusterCallTimestamp = state.lastBusterCallTimestamp.toMillis();
         checkBusterCallCooldown();
       }
+
+      if (state && state.showBusterCall) {
+        busterCallOverlay.classList.add('show');
+        const endMillis = state.endTimestamp.toMillis();
+        const remainingTime = endMillis - Date.now();
+        
+        // Play the sound
+        dingdongSound.play().catch(e => console.error("Sound play failed:", e));
+
+        if (remainingTime > 0) {
+          setTimeout(() => {
+            busterCallOverlay.classList.remove('show');
+            // Hide the overlay after 10 seconds and reset the state in Firestore.
+            db.collection('artifacts').doc(appId).collection('public')
+              .doc('data').collection('buster_call_state').doc('main_state')
+              .set({ showBusterCall: false }, { merge: true });
+          }, remainingTime);
+        } else {
+            busterCallOverlay.classList.remove('show');
+            // State is already expired, so reset it in Firestore.
+            db.collection('artifacts').doc(appId).collection('public')
+              .doc('data').collection('buster_call_state').doc('main_state')
+              .set({ showBusterCall: false }, { merge: true });
+        }
+      } else {
+        busterCallOverlay.classList.remove('show');
+      }
     });
 
     // 재생 상태 리스너
@@ -330,24 +360,13 @@
       const state = snap.data() || {};
       if (state.lastUpdatedBy === userId) return;
       try {
-        if (playerReady && state.videoId && globalState.videoId !== state.videoId) {
+        if (isYoutubeApiReady && state.videoId && globalState.videoId !== state.videoId) {
           player.loadVideoById(state.videoId);
           player.seekTo(state.timestamp, true);
         }
       } catch(e){ console.error(e); }
     });
     
-    // 알림 상태 리스너
-    const alertRef = db.collection('artifacts').doc(appId).collection('public')
-      .doc('data').collection('alert_state').doc('main_alert');
-    alertRef.onSnapshot((snap) => {
-      if (!snap.exists) return;
-      const data = snap.data();
-      if (data && data.message && data.timestamp) {
-        showMessage(data.message, data.type);
-      }
-    });
-
     // 재생목록 리스너
     const playlistRef = db.collection('artifacts').doc(appId).collection('public')
       .doc('data').collection('playlist_state').doc('main_playlist');
@@ -357,14 +376,19 @@
       const sortedPlaylist = Array.isArray(playlistData.playlist) ? playlistData.playlist : [];
       globalState.playlist = sortedPlaylist;
       renderList();
-      if (player && player.getPlayerState() === YT.PlayerState.PLAYING) {
-        updatePlayingSong(player.getVideoData().video_id);
-      }
     });
 
     // 노트 리스너 (모든 사용자가 볼 수 있도록 공개 컬렉션으로 변경)
     const notesRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('notes');
-    notesRef.onSnapshot(() => { renderCurrentSongNotes(); });
+    notesRef.onSnapshot(snapshot => { 
+        const newNotes = {};
+        snapshot.docs.forEach(doc => {
+            newNotes[doc.id] = doc.data();
+        });
+        globalState.notes = newNotes;
+        renderList();
+        renderCurrentSongNotes();
+    });
 
     // 따봉(좋아요) 리스너
     const likesRef = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('song_likes');
@@ -405,7 +429,14 @@
   }
 
   function getVisibleList() {
-    const list = [...globalState.playlist]; // Create a copy
+    let list = [...globalState.playlist]; // Create a copy
+    
+    // 특정 올린 사람으로 필터링
+    if (globalState.filterUploader) {
+        const filteredSongs = list.filter(item => globalState.notes[item.videoId]?.uploader === globalState.filterUploader);
+        const otherSongs = list.filter(item => globalState.notes[item.videoId]?.uploader !== globalState.filterUploader);
+        list = [...filteredSongs, ...otherSongs];
+    }
     
     // 따봉 정렬
     if (globalState.sortMode === 'likes') {
@@ -415,7 +446,6 @@
         return likesB - likesA; // 좋아요 수 내림차순
       });
     } else if (globalState.sortMode === 'shuffled') {
-      const now = Date.now(), day = 24*60*60*1000;
       const newSongs = list.filter(item => isNew(item));
       const oldSongs = list.filter(item => !isNew(item));
       const shuffledOld = [...oldSongs].sort(() => Math.random() - 0.5);
@@ -429,6 +459,18 @@
     }
 
     return list;
+  }
+  
+  // 올린 사람으로 필터링하는 함수
+  function filterByUploader(uploaderName) {
+      if (globalState.filterUploader === uploaderName) {
+          globalState.filterUploader = null; // 같은 사람을 다시 클릭하면 필터 해제
+          showMessage("필터가 해제되었습니다.");
+      } else {
+          globalState.filterUploader = uploaderName;
+          showMessage(`${uploaderName}님이 올린 곡만 상단으로 정렬합니다.`);
+      }
+      renderList();
   }
 
   /* ---------- 렌더 ---------- */
@@ -471,6 +513,16 @@
         titleSpan.prepend(newTag, ' ');
       }
 
+      // 올린 사람 정보 표시
+      const uploader = globalState.notes[item.videoId]?.uploader || '익명';
+      const uploaderBtn = document.createElement('button');
+      uploaderBtn.className = 'uploader-btn';
+      uploaderBtn.textContent = uploader;
+      uploaderBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          filterByUploader(uploader);
+      });
+
       // 좋아요 버튼 및 카운트
       const likeWrapper = document.createElement('div');
       const likeBtn = document.createElement('button');
@@ -487,6 +539,7 @@
       countSpan.className = 'like-count';
       countSpan.textContent = likeCount;
 
+      likeWrapper.appendChild(uploaderBtn);
       likeWrapper.appendChild(likeBtn);
       likeWrapper.appendChild(countSpan);
 
@@ -516,20 +569,20 @@
             busterCallToggleBtn.classList.remove('active');
           } else {
             const remaining = Math.ceil((globalState.busterCallCoolDown - (now - last)) / 1000);
-            saveAlertState(`버스터콜은 ${remaining}초 후에 다시 사용할 수 있습니다.`, 'error');
+            showMessage(`버스터콜은 ${remaining}초 후에 다시 사용할 수 있습니다.`, 'error');
             globalState.isBusterCallMode = false;
             busterCallToggleBtn.classList.remove('active');
           }
         } else {
           playVideo(index); // 가시 리스트 기준 인덱스
-          saveAlertState("해당 곡을 재생합니다.", 'info');
+          showMessage("해당 곡을 재생합니다.", 'info');
         }
       });
       
       listEl.appendChild(div);
     });
     
-    if (playlistToRender.length > 0 && (!player || !player.getVideoData())) {
+    if (playlistToRender.length > 0 && globalState.currentPlayingIndex === -1) {
       playVideo(0); 
     }
     renderCurrentSongInfo();
@@ -693,33 +746,29 @@
         comment: commentTextarea.value.trim(),
         updatedAt: firebase.firestore.FieldValue.serverTimestamp()
       }, { merge: true });
-      saveAlertState("노트가 저장되었습니다!", 'ok');
+      showMessage("노트가 저장되었습니다!", 'ok');
       closeInfoModal();
     } catch(e) {
       console.error(e);
-      saveAlertState("노트 저장 실패: " + e.message, 'error');
+      showMessage("노트 저장 실패: " + e.message, 'error');
     }
   }
 
   function busterCall(videoId) {
-    if (!authed) { saveAlertState("로그인되지 않았습니다.", 'error'); return; }
+    if (!authed) { showMessage("로그인되지 않았습니다.", 'error'); return; }
     try {
       db.collection('artifacts').doc(appId).collection('public')
         .doc('data').collection('playback_state').doc('main_state')
         .set({ videoId, timestamp: 0, lastUpdatedBy: userId, updatedAt: firebase.firestore.FieldValue.serverTimestamp() }, { merge: true });
       
-      saveAlertState("모든 사용자에게 버스터콜을 보냈습니다!", 'ok');
-      saveBusterCallState();
+      saveBusterCallState(videoId);
 
-      busterCallOverlay.classList.add('show');
-      setTimeout(() => { busterCallOverlay.classList.remove('show'); }, 3000);
-
-      player.loadVideoById(videoId, 0);
+      player.loadVideoById(videoId);
       player.playVideo();
       updatePlayingSong(videoId);
     } catch (e) {
       console.error(e);
-      saveAlertState("버스터콜에 실패했습니다. " + e.message, 'error');
+      showMessage("버스터콜에 실패했습니다. " + e.message, 'error');
     }
   }
 
@@ -745,7 +794,7 @@
   
   async function searchYouTubeAndAddSong(query) {
     if (!query) {
-        saveAlertState("검색어를 입력해주세요.", 'error');
+        showMessage("검색어를 입력해주세요.", 'error');
         return;
     }
 
@@ -765,13 +814,13 @@
         const newPlaylist = [...globalState.playlist, { title, artist, videoId, createdAt: new Date() }];
         updatePlaylist(newPlaylist);
         urlInput.value = '';
-        saveAlertState('검색 결과가 성공적으로 추가되었습니다.', 'ok');
+        showMessage('검색 결과가 성공적으로 추가되었습니다.', 'ok');
       } else {
         throw new Error("검색 결과가 없습니다.");
       }
     } catch (e) {
       console.error(e);
-      saveAlertState("검색에 실패했습니다: " + e.message + ". 수동으로 입력해주세요.", 'error');
+      showMessage("검색에 실패했습니다: " + e.message + ". 수동으로 입력해주세요.", 'error');
       isManuallyAdding = true;
       manualInputDiv.style.display = 'block';
       addBtn.textContent = '수동 추가';
@@ -789,10 +838,9 @@
     else if (index < 0) index = visible.length - 1;
 
     const nextSong = visible[index];
-    if (nextSong && player) {
+    if (nextSong && isYoutubeApiReady) {
       try {
-        player.loadVideoById(nextSong.videoId, 0);
-        player.playVideo();
+        player.loadVideoById(nextSong.videoId);
         updatePlayingSong(nextSong.videoId);
       } catch (e) { console.error(e); }
     }
@@ -835,13 +883,13 @@
         const videoId = getVideoId(inputVal);
         const title = manualTitleInput.value.trim();
         const artist = manualArtistInput.value.trim();
-        if (!videoId) { saveAlertState("유효한 유튜브 링크 또는 ID를 입력해주세요.", 'error'); addBtn.disabled=false; return; }
-        if (!title || !artist) { saveAlertState("제목과 아티스트를 모두 입력해주세요.", 'error'); addBtn.disabled=false; return; }
+        if (!videoId) { showMessage("유효한 유튜브 링크 또는 ID를 입력해주세요.", 'error'); addBtn.disabled=false; return; }
+        if (!title || !artist) { showMessage("제목과 아티스트를 모두 입력해주세요.", 'error'); addBtn.disabled=false; return; }
         const newPlaylist = [...globalState.playlist, { title, artist, videoId, createdAt: new Date() }];
         updatePlaylist(newPlaylist);
         urlInput.value = ''; manualTitleInput.value = ''; manualArtistInput.value = '';
         isManuallyAdding = false; manualInputDiv.style.display = 'none'; addBtn.textContent = '추가';
-        saveAlertState('곡이 성공적으로 추가되었습니다.', 'ok');
+        showMessage('곡이 성공적으로 추가되었습니다.', 'ok');
       } else {
         const videoId = getVideoId(inputVal);
         if (videoId) {
@@ -850,10 +898,10 @@
             const newPlaylist = [...globalState.playlist, { title: videoDetails.title, artist: videoDetails.artist, videoId, createdAt: new Date() }];
             updatePlaylist(newPlaylist);
             urlInput.value = '';
-            saveAlertState('곡이 성공적으로 추가되었습니다.', 'ok');
+            showMessage('곡이 성공적으로 추가되었습니다.', 'ok');
           } catch (e) {
             console.error(e);
-            saveAlertState("동영상 정보를 가져오는 데 실패했습니다. 수동으로 입력해주세요.", 'error');
+            showMessage("동영상 정보를 가져오는 데 실패했습니다. 수동으로 입력해주세요.", 'error');
             isManuallyAdding = true;
             manualInputDiv.style.display = 'block';
             addBtn.textContent = '수동 추가';
@@ -869,22 +917,24 @@
     
     shuffleBtn.addEventListener('click', () => {
       globalState.sortMode = (globalState.sortMode === 'shuffled') ? 'newest' : 'shuffled';
+      globalState.filterUploader = null; // 필터 해제
       shuffleBtn.classList.toggle('active', globalState.sortMode === 'shuffled');
       likeSortBtn.classList.remove('active');
       shuffleBtn.textContent = (globalState.sortMode === 'shuffled') ? '정렬' : '셔플';
       likeSortBtn.textContent = '따봉 정렬';
-      saveAlertState(globalState.sortMode === 'shuffled' ? "재생목록 셔플 (new 우선)" : "최신순으로 정렬", 'info');
+      showMessage(globalState.sortMode === 'shuffled' ? "재생목록 셔플 (new 우선)" : "최신순으로 정렬", 'info');
       renderList();
       playVideo(0);
     });
 
     likeSortBtn.addEventListener('click', () => {
       globalState.sortMode = (globalState.sortMode === 'likes') ? 'newest' : 'likes';
+      globalState.filterUploader = null; // 필터 해제
       likeSortBtn.classList.toggle('active', globalState.sortMode === 'likes');
       shuffleBtn.classList.remove('active');
       likeSortBtn.textContent = (globalState.sortMode === 'likes') ? '최신순 정렬' : '따봉 정렬';
       shuffleBtn.textContent = '셔플';
-      saveAlertState(globalState.sortMode === 'likes' ? "따봉 많은 순으로 정렬" : "최신순으로 정렬", 'info');
+      showMessage(globalState.sortMode === 'likes' ? "따봉 많은 순으로 정렬" : "최신순으로 정렬", 'info');
       renderList();
       playVideo(0);
     });
@@ -893,11 +943,11 @@
       globalState.isBusterCallMode = !globalState.isBusterCallMode;
       busterCallToggleBtn.classList.toggle('active', globalState.isBusterCallMode);
       busterCallToggleBtn.textContent = "버스터콜";
-      saveAlertState(globalState.isBusterCallMode ? "버스터콜 모드가 활성화되었습니다. 재생목록을 눌러 버스터콜을 시작하세요." : "버스터콜 모드가 비활성화되었습니다.", 'info');
+      showMessage(globalState.isBusterCallMode ? "버스터콜 모드가 활성화되었습니다. 재생목록을 눌러 버스터콜을 시작하세요." : "버스터콜 모드가 비활성화되었습니다.", 'info');
     });
     
-    prevSongBtn.addEventListener('click', () => { playPrev(); saveAlertState("이전 곡으로 넘어갑니다.", 'info'); });
-    nextSongBtn.addEventListener('click', () => { playNext(); saveAlertState("다음 곡으로 넘어갑니다.", 'info'); });
+    prevSongBtn.addEventListener('click', () => { playPrev(); showMessage("이전 곡으로 넘어갑니다.", 'info'); });
+    nextSongBtn.addEventListener('click', () => { playNext(); showMessage("다음 곡으로 넘어갑니다.", 'info'); });
     togglePlayerBtn.addEventListener('click', togglePlayerVisibility);
 
     modalCloseBtn.addEventListener('click', closeInfoModal);
